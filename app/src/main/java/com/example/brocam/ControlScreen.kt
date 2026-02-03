@@ -1,123 +1,106 @@
 package com.example.brocam
 
 import android.graphics.BitmapFactory
+import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.google.android.gms.nearby.connection.*
 
 @Composable
-fun ControlScreen(onBackPressed: () -> Unit) {
+fun ControlScreen(viewModel: BroCamViewModel) {
     val context = LocalContext.current
-    val nearbyManager = remember { NearbyManager(context) }
+    val nearbyManager = viewModel.nearbyManager
 
-    val discoveredLenses = remember { mutableStateListOf<Pair<String, String>>() }
-    var connectedEndpointId by remember { mutableStateOf<String?>(null) }
-    var status by remember { mutableStateOf("Buscando BroCam...") }
+    var remoteBitmap by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
+    var connectedId by remember { mutableStateOf<String?>(null) }
+    var statusText by remember { mutableStateOf("Iniciando búsqueda...") }
+    var isSearching by remember { mutableStateOf(true) }
 
-    // --- LA VARIABLE MÁGICA: Aquí guardamos el frame de video actual ---
-    var remoteFrame by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
-
-    val connectionCallback = object : ConnectionLifecycleCallback() {
-        override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) {
-            nearbyManager.acceptConnection(endpointId, object : PayloadCallback() {
-                override fun onPayloadReceived(id: String, payload: Payload) {
-                    // 1. Recibimos los bytes
-                    val bytes = payload.asBytes()
-                    if (bytes != null) {
-                        // 2. Los convertimos en imagen (Bitmap)
-                        val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                        // 3. Actualizamos la pantalla
-                        remoteFrame = bitmap
-                    }
-                }
-                override fun onPayloadTransferUpdate(id: String, update: PayloadTransferUpdate) {}
-            })
-        }
-
-        override fun onConnectionResult(endpointId: String, result: ConnectionResolution) {
-            if (result.status.isSuccess) {
-                connectedEndpointId = endpointId
-                status = "¡CONECTADO!"
-                nearbyManager.stopDiscovery()
-            }
-        }
-
-        override fun onDisconnected(endpointId: String) {
-            connectedEndpointId = null
-            remoteFrame = null
-            status = "Lente desconectado"
-        }
-    }
+    BackHandler { viewModel.setRole(null) }
 
     LaunchedEffect(Unit) {
         nearbyManager.startDiscovery(object : EndpointDiscoveryCallback() {
             override fun onEndpointFound(id: String, info: DiscoveredEndpointInfo) {
-                if (!discoveredLenses.any { it.first == id }) discoveredLenses.add(id to info.endpointName)
+                // AQUÍ SABREMOS SI LO ENCUENTRA
+                statusText = "¡ENCONTRADO: ${info.endpointName}!"
+                Toast.makeText(context, "Encontré un Lente, conectando...", Toast.LENGTH_SHORT).show()
+
+                nearbyManager.requestConnection(id, object : ConnectionLifecycleCallback() {
+                    override fun onConnectionInitiated(id: String, info: ConnectionInfo) {
+                        Toast.makeText(context, "Iniciando conexión...", Toast.LENGTH_SHORT).show()
+                        nearbyManager.acceptConnection(id, object : PayloadCallback() {
+                            override fun onPayloadReceived(endpointId: String, p: Payload) {
+                                val bytes = p.asBytes() ?: return
+                                if (bytes.size > 100) {
+                                    remoteBitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+                                }
+                            }
+                            override fun onPayloadTransferUpdate(id: String, u: PayloadTransferUpdate) {}
+                        })
+                    }
+
+                    override fun onConnectionResult(id: String, res: ConnectionResolution) {
+                        if (res.status.isSuccess) {
+                            connectedId = id
+                            isSearching = false
+                            statusText = "Conectado"
+                            Toast.makeText(context, "¡CONECTADO!", Toast.LENGTH_SHORT).show()
+                            // Pedimos video inmediatamente
+                            nearbyManager.sendData(id, Payload.fromBytes("START_STREAM".toByteArray()))
+                        } else {
+                            statusText = "Error: ${res.status.statusMessage}"
+                            Toast.makeText(context, "Error de conexión: ${res.status.statusCode}", Toast.LENGTH_LONG).show()
+                        }
+                    }
+
+                    override fun onDisconnected(id: String) {
+                        isSearching = true
+                        connectedId = null
+                        remoteBitmap = null
+                        statusText = "Se desconectó"
+                    }
+                })
             }
-            override fun onEndpointLost(id: String) { discoveredLenses.removeAll { it.first == id } }
+
+            override fun onEndpointLost(id: String) {
+                statusText = "Se perdió la señal del Lente"
+            }
         })
     }
 
-    Column(modifier = Modifier.fillMaxSize().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-        Text("MODO CONTROL", style = MaterialTheme.typography.titleLarge)
-        Text(status, color = if (connectedEndpointId != null) Color(0xFF4CAF50) else Color.Gray)
-
-        Spacer(modifier = Modifier.height(16.dp))
-
-        if (connectedEndpointId == null) {
-            // ... (Tu código de LazyColumn para buscar dispositivos sigue igual)
-            LazyColumn(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                items(discoveredLenses) { (id, name) ->
-                    Card(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp).clickable { nearbyManager.requestConnection(id, connectionCallback) }) {
-                        ListItem(headlineContent = { Text(name) }, supportingContent = { Text("Toca para conectar") })
-                    }
+    Column(modifier = Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+            if (isSearching || remoteBitmap == null) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CircularProgressIndicator()
+                    Spacer(Modifier.height(16.dp))
+                    Text(statusText, style = MaterialTheme.typography.headlineSmall)
+                    Spacer(Modifier.height(8.dp))
+                    Text("Asegúrate de que el Lente esté en pantalla", style = MaterialTheme.typography.bodySmall)
+                }
+            } else {
+                remoteBitmap?.let {
+                    Image(bitmap = it.asImageBitmap(), contentDescription = null, modifier = Modifier.fillMaxSize())
                 }
             }
-        } else {
-            // --- EL VISOR DE VIDEO REAL ---
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .background(Color.Black),
-                contentAlignment = Alignment.Center
-            ) {
-                remoteFrame?.let { bitmap ->
-                    Image(
-                        bitmap = bitmap.asImageBitmap(),
-                        contentDescription = "Vista remota",
-                        modifier = Modifier.fillMaxSize(),
-                        contentScale = ContentScale.Fit // Ajusta la imagen sin deformar
-                    )
-                } ?: Text("Esperando señal de video...", color = Color.White)
-            }
-
-            // BOTÓN DE DISPARO
-            Button(
-                onClick = {
-                    // Enviamos el comando de texto al Lente
-                    val command = "TAKE_PHOTO".toByteArray()
-                    nearbyManager.sendData(connectedEndpointId!!, Payload.fromBytes(command))
-                },
-                modifier = Modifier.padding(24.dp).size(80.dp),
-                shape = androidx.compose.foundation.shape.CircleShape,
-                colors = ButtonDefaults.buttonColors(containerColor = Color.Red)
-            ) { }
         }
 
-        Button(onClick = { nearbyManager.stopAll(); onBackPressed() }) { Text("Salir") }
+        Surface(tonalElevation = 8.dp, modifier = Modifier.fillMaxWidth()) {
+            Row(Modifier.padding(24.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
+                OutlinedButton(onClick = { viewModel.setRole(null) }) { Text("Salir") }
+                Button(
+                    onClick = { connectedId?.let { nearbyManager.sendData(it, Payload.fromBytes("TAKE_PHOTO".toByteArray())) } },
+                    enabled = connectedId != null
+                ) { Text("📸 DISPARAR") }
+            }
+        }
     }
 }

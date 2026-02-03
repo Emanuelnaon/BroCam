@@ -1,112 +1,65 @@
-package com.example.brocam // Asegúrate de que este sea TU paquete
+package com.example.brocam
 
 import android.Manifest
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.*
-import androidx.compose.material3.*
+import androidx.activity.viewModels // Importante para usar el ViewModel
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
-
-enum class ScreenState { WELCOME, CAMERA, CONTROL }
+import com.example.brocam.ui.theme.BroCamTheme
 
 class MainActivity : ComponentActivity() {
+
+    // Inyectamos el cerebro (ViewModel)
+    private val viewModel by viewModels<BroCamViewModel>()
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent {
-            AppNavigation()
-        }
-    }
-}
 
-@Composable
-fun AppNavigation() {
-    var currentScreen by remember { mutableStateOf(ScreenState.WELCOME) }
-
-    // 1. Lanzador para la Cámara (Modo Lente)
-    val cameraLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        if (isGranted) currentScreen = ScreenState.CAMERA
-    }
-
-    // 2. Lanzador para Nearby/Bluetooth (Modo Control)
-    val controlLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { permissions ->
-        if (permissions.values.all { it }) currentScreen = ScreenState.CONTROL
-    }
-
-    when (currentScreen) {
-        ScreenState.WELCOME -> WelcomeScreen(
-            onLenteClick = {
-                cameraLauncher.launch(Manifest.permission.CAMERA)
-            },
-            onControlClick = {
-                // Lista de permisos según la versión de Android
-                val permissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    arrayOf(
-                        Manifest.permission.BLUETOOTH_SCAN,
-                        Manifest.permission.BLUETOOTH_CONNECT,
-                        Manifest.permission.BLUETOOTH_ADVERTISE,
-                        Manifest.permission.ACCESS_FINE_LOCATION
-                    )
-                } else {
-                    arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
-                }
-                controlLauncher.launch(permissions)
+        // --- GESTIÓN DE PERMISOS (Igual que antes) ---
+        val permissions = mutableListOf(
+            Manifest.permission.CAMERA,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ).apply {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                add(Manifest.permission.BLUETOOTH_SCAN)
+                add(Manifest.permission.BLUETOOTH_ADVERTISE)
+                add(Manifest.permission.BLUETOOTH_CONNECT)
             }
-        )
-        ScreenState.CAMERA -> CameraScreen()
-        ScreenState.CONTROL -> ControlScreen(
-            onBackPressed = { currentScreen = ScreenState.WELCOME }
-        )
-    }
-} // <--- Esta es la llave que faltaba
-
-@Composable
-fun WelcomeScreen(onLenteClick: () -> Unit, onControlClick: () -> Unit) {
-    var selectedProfile by remember { mutableStateOf(UserProfile.STANDARD) }
-
-    Column(
-        modifier = Modifier.fillMaxSize().padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text(text = "BroCam MVP", style = MaterialTheme.typography.headlineLarge)
-        Spacer(modifier = Modifier.height(32.dp))
-
-        Button(
-            onClick = onLenteClick,
-            modifier = Modifier.fillMaxWidth().height(60.dp)
-        ) {
-            Text("USAR COMO LENTE")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                add(Manifest.permission.NEARBY_WIFI_DEVICES)
+            }
         }
+        val launcher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
+        launcher.launch(permissions.toTypedArray())
 
-        Spacer(modifier = Modifier.height(16.dp))
+        setContent {
+            BroCamTheme {
+                // Observamos el rol actual desde el ViewModel
+                val role by viewModel.currentRole.collectAsState()
 
-        Button(
-            onClick = onControlClick,
-            modifier = Modifier.fillMaxWidth().height(60.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
-        ) {
-            Text("USAR COMO CONTROL")
-        }
-
-        Spacer(modifier = Modifier.height(48.dp))
-        Text(text = "Perfil seleccionado:")
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            RadioButton(selected = selectedProfile == UserProfile.STANDARD, onClick = { selectedProfile = UserProfile.STANDARD })
-            Text("Estándar")
-            Spacer(modifier = Modifier.width(16.dp))
-            RadioButton(selected = selectedProfile == UserProfile.SOLO_TRAVELER, onClick = { selectedProfile = UserProfile.SOLO_TRAVELER })
-            Text("Viajero")
+                // NAVEGACIÓN BASADA EN ESTADO
+                when (role) {
+                    null -> {
+                        // Si no hay rol, mostramos la Bienvenida
+                        WelcomeScreen { selectedRole, profile ->
+                            viewModel.selectedProfile = profile
+                            viewModel.setRole(selectedRole)
+                        }
+                    }
+                    AppRole.LENTE -> {
+                        // Pasamos el viewModel completo a la pantalla
+                        CameraScreen(viewModel)
+                    }
+                    AppRole.CONTROL -> {
+                        // Pasamos el viewModel completo a la pantalla
+                        ControlScreen(viewModel)
+                    }
+                }
+            }
         }
     }
 }

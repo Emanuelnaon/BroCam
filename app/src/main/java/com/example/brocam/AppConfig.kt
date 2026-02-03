@@ -1,12 +1,10 @@
 package com.example.brocam
 
-enum class UserProfile {
-    STANDARD, SOLO_TRAVELER
-}
+// Define si somos Lente o Control (Roles de red)
+enum class AppRole { LENTE, CONTROL }
 
-data class SessionState(
-    val role: String? = null, // "LENTE" o "CONTROL"
-    val profile: UserProfile = UserProfile.STANDARD,
-    val isConnected: Boolean = false,
-    val remoteDeviceName: String? = null
-)
+// Define si somos Estándar o Viajero (Modo de uso)
+enum class UserProfile { STANDARD, SOLO_TRAVELER }
+
+// Define qué pantalla estamos viendo
+enum class ScreenState { WELCOME, CAMERA, CONTROL }
