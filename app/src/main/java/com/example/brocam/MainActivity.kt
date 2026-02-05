@@ -6,57 +6,52 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.activity.viewModels // Importante para usar el ViewModel
-import androidx.compose.runtime.*
-import com.example.brocam.ui.theme.BroCamTheme
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.Modifier
+import androidx.lifecycle.ViewModelProvider
+import com.example.brocam.ui.screens.CameraScreen
+import com.example.brocam.ui.screens.ControlScreen
+import com.example.brocam.ui.screens.WelcomeScreen
+import com.example.brocam.ui.viewmodel.BroCamViewModel
 
 class MainActivity : ComponentActivity() {
 
-    // Inyectamos el cerebro (ViewModel)
-    private val viewModel by viewModels<BroCamViewModel>()
+    private val permissionsToRequest = mutableListOf(
+        Manifest.permission.CAMERA,
+        Manifest.permission.ACCESS_FINE_LOCATION,
+        Manifest.permission.ACCESS_COARSE_LOCATION
+    ).apply {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            add(Manifest.permission.BLUETOOTH_SCAN)
+            add(Manifest.permission.BLUETOOTH_ADVERTISE)
+            add(Manifest.permission.BLUETOOTH_CONNECT)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            add(Manifest.permission.NEARBY_WIFI_DEVICES)
+        }
+    }.toTypedArray()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }.launch(permissionsToRequest)
 
-        // --- GESTIÓN DE PERMISOS (Igual que antes) ---
-        val permissions = mutableListOf(
-            Manifest.permission.CAMERA,
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION
-        ).apply {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                add(Manifest.permission.BLUETOOTH_SCAN)
-                add(Manifest.permission.BLUETOOTH_ADVERTISE)
-                add(Manifest.permission.BLUETOOTH_CONNECT)
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                add(Manifest.permission.NEARBY_WIFI_DEVICES)
-            }
-        }
-        val launcher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
-        launcher.launch(permissions.toTypedArray())
+        // SOLUCIÓN: Iniciamos el ViewModel a la antigua (Compatible 100%)
+        val viewModel = ViewModelProvider(this).get(BroCamViewModel::class.java)
 
         setContent {
-            BroCamTheme {
-                // Observamos el rol actual desde el ViewModel
-                val role by viewModel.currentRole.collectAsState()
+            MaterialTheme {
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
 
-                // NAVEGACIÓN BASADA EN ESTADO
-                when (role) {
-                    null -> {
-                        // Si no hay rol, mostramos la Bienvenida
-                        WelcomeScreen { selectedRole, profile ->
-                            viewModel.selectedProfile = profile
-                            viewModel.setRole(selectedRole)
-                        }
-                    }
-                    AppRole.LENTE -> {
-                        // Pasamos el viewModel completo a la pantalla
-                        CameraScreen(viewModel)
-                    }
-                    AppRole.CONTROL -> {
-                        // Pasamos el viewModel completo a la pantalla
-                        ControlScreen(viewModel)
+                    val currentRole by viewModel.currentRole.collectAsState()
+
+                    when (currentRole) {
+                        null -> WelcomeScreen(onRoleSelected = { role -> viewModel.setRole(role) })
+                        AppRole.LENTE -> CameraScreen(viewModel)
+                        AppRole.CONTROL -> ControlScreen(viewModel)
                     }
                 }
             }

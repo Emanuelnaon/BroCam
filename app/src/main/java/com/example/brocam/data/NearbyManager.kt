@@ -1,15 +1,21 @@
-package com.example.brocam
+package com.example.brocam.data
 
 import android.content.Context
 import android.widget.Toast
 import com.google.android.gms.nearby.Nearby
-import com.google.android.gms.nearby.connection.*
+import com.google.android.gms.nearby.connection.AdvertisingOptions
+import com.google.android.gms.nearby.connection.ConnectionLifecycleCallback
+import com.google.android.gms.nearby.connection.DiscoveryOptions
+import com.google.android.gms.nearby.connection.EndpointDiscoveryCallback
+import com.google.android.gms.nearby.connection.Payload
+import com.google.android.gms.nearby.connection.PayloadCallback
+import com.google.android.gms.nearby.connection.Strategy
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 class NearbyManager(private val context: Context) {
     private val client = Nearby.getConnectionsClient(context)
-    private val SERVICE_ID = "com.example.brocam.SERVICE_ID" // Identificador único
+    private val SERVICE_ID = "com.example.brocam.V2_SERVICE" // Identificador único
 
     // Estrategia P2P_STAR: Ideal para 1 Lente y 1 Control
     private val STRATEGY = Strategy.P2P_STAR
