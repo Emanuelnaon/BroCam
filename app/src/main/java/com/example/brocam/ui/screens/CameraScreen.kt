@@ -12,7 +12,7 @@ import androidx.camera.view.PreviewView
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.runtime.* // <--- ESTO IMPORTA 'getValue' y 'setValue'
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -24,8 +24,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.brocam.ui.viewmodel.BroCamViewModel
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
-
-// IMPORTANTE: Estas líneas arreglan el error de 'getValue'
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 
@@ -46,24 +44,11 @@ fun CameraScreen(viewModel: BroCamViewModel) {
     var cameraControl: CameraControl? by remember { mutableStateOf(null) }
     var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
 
-    // --- DEBUG: ESCUCHA DEL FLASH CON MENSAJES ---
+    // --- EFECTOS (Flash, Disparo) --- (IGUAL QUE ANTES)
     LaunchedEffect(isFlashOn) {
-        if (cameraControl == null) {
-            // Toast.makeText(context, "⚠️ Cámara no lista", Toast.LENGTH_SHORT).show()
-        } else if (isFrontCamera) {
-            Toast.makeText(context, "🤳 Frontal: Sin Flash", Toast.LENGTH_SHORT).show()
-        } else {
-            try {
-                cameraControl?.enableTorch(isFlashOn)
-                val estado = if (isFlashOn) "ON 💡" else "OFF 🌑"
-                Toast.makeText(context, "Flash: $estado", Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                Toast.makeText(context, "❌ Error Flash: ${e.message}", Toast.LENGTH_LONG).show()
-            }
-        }
+        if (!isFrontCamera) try { cameraControl?.enableTorch(isFlashOn) } catch (e: Exception) { }
     }
 
-    // --- DISPARO ---
     LaunchedEffect(Unit) {
         viewModel.shutterEvent.collect {
             val contentValues = ContentValues().apply {
@@ -78,15 +63,14 @@ fun CameraScreen(viewModel: BroCamViewModel) {
             imageCapture.takePicture(options, ContextCompat.getMainExecutor(context), object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(res: ImageCapture.OutputFileResults) {
                     Toast.makeText(context, "📸 Foto Guardada", Toast.LENGTH_SHORT).show()
+                    // Aquí podríamos enviar la miniatura
                 }
-                override fun onError(e: ImageCaptureException) {
-                    Toast.makeText(context, "Error Foto: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
+                override fun onError(e: ImageCaptureException) {}
             })
         }
     }
 
-    // --- CONFIGURACIÓN DE CÁMARA (Lente/Calidad/Giro) ---
+    // --- CONFIGURACIÓN DE CÁMARA ---
     LaunchedEffect(isHighQuality, isFrontCamera, cameraProviderState.value, previewViewRef) {
         val myProvider = cameraProviderState.value
         val myPreviewView = previewViewRef
@@ -111,33 +95,34 @@ fun CameraScreen(viewModel: BroCamViewModel) {
                     .build()
 
                 var lastFrameTime = 0L
+
+                // --- OPTIMIZACIÓN DEL ANALYZER ---
                 analyzer.setAnalyzer(analysisExecutor) { proxy ->
                     val currentTime = System.currentTimeMillis()
+
                     if (isStreaming && (currentTime - lastFrameTime > minDelay)) {
                         lastFrameTime = currentTime
+
+                        // 1. Comprimir en hilo de fondo (Analyzer Thread)
                         val stream = ByteArrayOutputStream()
                         val quality = if (isHighQuality) 20 else 10
                         proxy.toBitmap().compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, stream)
-                        viewModel.sendFrame(stream.toByteArray())
+
+                        // 2. Encolar en el Canal (No bloqueante)
+                        // Si el canal está lleno, DROP_OLDEST elimina el frame viejo automáticamente.
+                        viewModel.enqueueFrame(stream.toByteArray())
+
                         stream.close()
                     }
                     proxy.close()
                 }
 
-                // VINCULACIÓN
                 val camera = myProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, analyzer, imageCapture)
-
-                // ASIGNAMOS EL CONTROL
                 cameraControl = camera.cameraControl
 
-                // Restaurar estado del flash si es trasera
-                if (!isFrontCamera && isFlashOn) {
-                    cameraControl?.enableTorch(true)
-                }
+                if (!isFrontCamera && isFlashOn) cameraControl?.enableTorch(true)
 
-            } catch (e: Exception) {
-                // Error silencioso al cambiar
-            }
+            } catch (e: Exception) { }
         }
     }
 

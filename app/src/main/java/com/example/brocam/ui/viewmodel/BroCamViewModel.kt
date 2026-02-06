@@ -10,6 +10,7 @@ import com.example.brocam.UserProfile
 import com.example.brocam.data.NearbyManager
 import com.google.android.gms.nearby.connection.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,6 +20,15 @@ import kotlinx.coroutines.withContext
 
 class BroCamViewModel(application: Application) : AndroidViewModel(application) {
     private val nearbyManager = NearbyManager(application.applicationContext)
+
+    // --- PATRÓN PRODUCER-CONSUMER (BUFFER INTELIGENTE) ---
+    // Capacity = 1 + DROP_OLDEST: Esto es la magia.
+    // Si el sistema está ocupado enviando un frame y llega otro,
+    // BORRA el anterior y se queda con el nuevo. Cero acumulación en el Main Thread.
+    private val frameChannel = Channel<ByteArray>(
+        capacity = 1,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
+    )
 
     // --- ESTADOS ---
     private val _currentRole = MutableStateFlow<AppRole?>(null)
@@ -37,9 +47,16 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
     private val _isFlashOn = MutableStateFlow(false)
     val isFlashOn = _isFlashOn.asStateFlow()
 
-    // NUEVO: Estado de Cámara Frontal/Trasera (false = Trasera)
     private val _isFrontCamera = MutableStateFlow(false)
     val isFrontCamera = _isFrontCamera.asStateFlow()
+
+    // Rotación
+    private val _rotationDegrees = MutableStateFlow(0)
+    val rotationDegrees = _rotationDegrees.asStateFlow()
+
+    // Última foto
+    private val _lastCapturedPhoto = MutableStateFlow<Bitmap?>(null)
+    val lastCapturedPhoto = _lastCapturedPhoto.asStateFlow()
 
     private val _shutterEvent = Channel<Boolean>()
     val shutterEvent = _shutterEvent.receiveAsFlow()
@@ -52,6 +69,37 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
     private val _connectionState = MutableStateFlow(ConnectionState())
     val connectionState = _connectionState.asStateFlow()
 
+    // --- INICIALIZACIÓN DEL CONSUMIDOR (WORKER) ---
+    init {
+        startFrameConsumer()
+    }
+
+    private fun startFrameConsumer() {
+        // Este "Worker" vive en el hilo IO y nunca toca el Main Thread
+        viewModelScope.launch(Dispatchers.IO) {
+            // El bucle 'for' se suspende (duerme) si no hay datos. Eficiencia pura.
+            for (bytes in frameChannel) {
+                val endpointId = _connectionState.value.connectedEndpointId
+                if (endpointId != null && _isStreaming.value) {
+                    try {
+                        // Enviamos a la red (Tarea Bloqueante)
+                        nearbyManager.sendData(endpointId, Payload.fromBytes(bytes))
+                    } catch (e: Exception) {
+                        // Manejo silencioso para no romper el flujo
+                    }
+                }
+            }
+        }
+    }
+
+    // --- ENTRADA DEL PRODUCTOR ---
+    // Esta función es llamada por la Cámara (Productor)
+    fun enqueueFrame(bytes: ByteArray) {
+        // trySend es no-bloqueante e instantáneo.
+        // Si el canal está lleno, DROP_OLDEST elimina el viejo.
+        frameChannel.trySend(bytes)
+    }
+
     // --- MANEJO DE ROLES ---
     fun setRole(role: AppRole?) {
         _currentRole.value = role
@@ -62,7 +110,7 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
-    // --- PROCESAMIENTO ---
+    // --- RECEPCIÓN DE DATOS ---
     private val payloadCallback = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
             payload.asBytes()?.let { bytes ->
@@ -78,12 +126,12 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
                                 "QUALITY_SD" -> _isHighQuality.value = false
                                 "FLASH_ON" -> _isFlashOn.value = true
                                 "FLASH_OFF" -> _isFlashOn.value = false
-                                // NUEVO COMANDO
-                                "CAM_FRONT" -> _isFrontCamera.value = true
-                                "CAM_BACK" -> _isFrontCamera.value = false
+                                "CAM_FRONT" -> { _isFrontCamera.value = true; _rotationDegrees.value = 270 }
+                                "CAM_BACK" -> { _isFrontCamera.value = false; _rotationDegrees.value = 90 }
                             }
                         }
                     } else {
+                        // Decodificar imagen en IO
                         val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                         _receivedFrame.value = bitmap
                     }
@@ -93,7 +141,7 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
         override fun onPayloadTransferUpdate(id: String, u: PayloadTransferUpdate) {}
     }
 
-    // --- CONEXIÓN ---
+    // --- FUNCIONES PÚBLICAS ---
     private fun startLenteMode() {
         _connectionState.value = ConnectionState(message = "Haciéndome visible...")
         nearbyManager.startAdvertising(object : ConnectionLifecycleCallback() {
@@ -117,7 +165,6 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
         })
     }
 
-    // --- FUNCIONES PÚBLICAS ---
     fun toggleQuality() {
         val newValue = !_isHighQuality.value
         _isHighQuality.value = newValue
@@ -136,12 +183,10 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
         sendCommand(if (newValue) "CAM_FRONT" else "CAM_BACK")
     }
 
-    fun sendFrame(bytes: ByteArray) {
-        if (_isStreaming.value) _connectionState.value.connectedEndpointId?.let { nearbyManager.sendData(it, Payload.fromBytes(bytes)) }
-    }
-
     fun sendCommand(cmd: String) {
-        _connectionState.value.connectedEndpointId?.let { nearbyManager.sendData(it, Payload.fromBytes(cmd.toByteArray())) }
+        viewModelScope.launch(Dispatchers.IO) {
+            _connectionState.value.connectedEndpointId?.let { nearbyManager.sendData(it, Payload.fromBytes(cmd.toByteArray())) }
+        }
     }
 
     fun triggerRemotePhoto() { sendCommand("TAKE_PHOTO") }
@@ -159,6 +204,7 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
         _isHighQuality.value = false
         _isFlashOn.value = false
         _isFrontCamera.value = false
+        // El canal se limpia solo
     }
 
     override fun onCleared() { super.onCleared(); nearbyManager.stopAll() }
