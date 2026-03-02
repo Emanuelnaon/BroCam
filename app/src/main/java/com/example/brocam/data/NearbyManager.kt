@@ -62,8 +62,35 @@ class NearbyManager(private val context: Context) {
         client.requestConnection("Control_Remoto", id, callback)
             .addOnFailureListener { Toast.makeText(context, "Falló al pedir conexión", Toast.LENGTH_SHORT).show() }
     }
+    object BroCamLogger {
+        private var frameCount = 0
+        private var totalBytes = 0L
+        private var lastLogTime = System.currentTimeMillis()
 
+        // Llama a esta función justo antes de enviar el Payload
+        fun logFrameTransmission(payloadSizeBytes: Int) {
+            frameCount++
+            totalBytes += payloadSizeBytes
+            val now = System.currentTimeMillis()
+
+            // Solo imprimimos en consola 1 vez por segundo
+            if (now - lastLogTime >= 1000) {
+                val avgSizeKb = if (frameCount > 0) (totalBytes / frameCount) / 1024 else 0
+                val totalKbps = totalBytes / 1024
+
+                // Etiqueta clara para filtrar en el Logcat
+                android.util.Log.d("BroCam_Telemetry",
+                    "📊 FPS Enviados: $frameCount | Peso Promedio: $avgSizeKb KB/frame | Ancho de banda: $totalKbps KB/s")
+
+                // Reseteamos contadores para el siguiente segundo
+                frameCount = 0
+                totalBytes = 0L
+                lastLogTime = now
+            }
+        }
+    }
     fun sendData(id: String, payload: Payload) {
+        BroCamLogger.logFrameTransmission(payload.asBytes()?.size ?: 0)
         client.sendPayload(id, payload)
     }
 

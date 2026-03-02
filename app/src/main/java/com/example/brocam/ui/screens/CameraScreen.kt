@@ -9,6 +9,7 @@ import androidx.camera.core.*
 import androidx.camera.core.resolutionselector.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -24,8 +25,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.brocam.ui.viewmodel.BroCamViewModel
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
 
 @Composable
 fun CameraScreen(viewModel: BroCamViewModel) {
@@ -44,7 +43,6 @@ fun CameraScreen(viewModel: BroCamViewModel) {
     var cameraControl: CameraControl? by remember { mutableStateOf(null) }
     var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
 
-    // --- EFECTOS (Flash, Disparo) --- (IGUAL QUE ANTES)
     LaunchedEffect(isFlashOn) {
         if (!isFrontCamera) try { cameraControl?.enableTorch(isFlashOn) } catch (e: Exception) { }
     }
@@ -63,14 +61,13 @@ fun CameraScreen(viewModel: BroCamViewModel) {
             imageCapture.takePicture(options, ContextCompat.getMainExecutor(context), object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(res: ImageCapture.OutputFileResults) {
                     Toast.makeText(context, "📸 Foto Guardada", Toast.LENGTH_SHORT).show()
-                    // Aquí podríamos enviar la miniatura
                 }
                 override fun onError(e: ImageCaptureException) {}
             })
         }
     }
 
-    // --- CONFIGURACIÓN DE CÁMARA ---
+    // --- ANALYZER (Optimizando para 2 Teléfonos) ---
     LaunchedEffect(isHighQuality, isFrontCamera, cameraProviderState.value, previewViewRef) {
         val myProvider = cameraProviderState.value
         val myPreviewView = previewViewRef
@@ -79,8 +76,10 @@ fun CameraScreen(viewModel: BroCamViewModel) {
             try {
                 myProvider.unbindAll()
 
-                val targetSize = if (isHighQuality) Size(640, 480) else Size(320, 240)
-                val minDelay = if (isHighQuality) 100L else 50L
+                // 🚀 DESBLOQUEO DE RESOLUCIÓN
+                // SD = 640x480 (VGA). HD = 1280x720 (720p).
+                val targetSize = if (isHighQuality) Size(1280, 720) else Size(640, 480)
+                val minDelay = if (isHighQuality) 80L else 40L // Permitimos más FPS (hasta ~25 FPS)
 
                 val cameraSelector = if (isFrontCamera) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
 
@@ -95,44 +94,35 @@ fun CameraScreen(viewModel: BroCamViewModel) {
                     .build()
 
                 var lastFrameTime = 0L
-
-                // --- OPTIMIZACIÓN DEL ANALYZER ---
                 analyzer.setAnalyzer(analysisExecutor) { proxy ->
                     val currentTime = System.currentTimeMillis()
-
                     if (isStreaming && (currentTime - lastFrameTime > minDelay)) {
                         lastFrameTime = currentTime
-
-                        // 1. Comprimir en hilo de fondo (Analyzer Thread)
                         val stream = ByteArrayOutputStream()
-                        val quality = if (isHighQuality) 20 else 10
+
+                        // Ajuste de compresión: 30% para SD, 20% para HD (para no saturar el WiFi)
+                        val quality = if (isHighQuality) 70 else 60
                         proxy.toBitmap().compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, stream)
 
-                        // 2. Encolar en el Canal (No bloqueante)
-                        // Si el canal está lleno, DROP_OLDEST elimina el frame viejo automáticamente.
+                        // Empujamos al canal. El CONFLATED se encargará si la red va lenta.
                         viewModel.enqueueFrame(stream.toByteArray())
-
                         stream.close()
                     }
                     proxy.close()
                 }
 
+                // Vinculamos cámara, vista previa, análisis de imagen y captura de foto
                 val camera = myProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, analyzer, imageCapture)
                 cameraControl = camera.cameraControl
-
                 if (!isFrontCamera && isFlashOn) cameraControl?.enableTorch(true)
-
             } catch (e: Exception) { }
         }
     }
 
     BackHandler { viewModel.setRole(null) }
 
-    DisposableEffect(Unit) {
-        onDispose { analysisExecutor.shutdownNow() }
-    }
-
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        // VISTA PREVIA LIMPIA A PANTALLA COMPLETA
         AndroidView(
             factory = { ctx ->
                 val pv = PreviewView(ctx)
@@ -145,11 +135,13 @@ fun CameraScreen(viewModel: BroCamViewModel) {
             modifier = Modifier.fillMaxSize()
         )
 
+        // INFO DE ESTADO DE PRODUCCIÓN
         Column(Modifier.align(Alignment.TopEnd).padding(16.dp), horizontalAlignment = Alignment.End) {
             if (isStreaming) {
-                Text("🔴 EN VIVO", color = Color.Red, style = MaterialTheme.typography.titleMedium)
-                Text(if (isHighQuality) "HD" else "RÁPIDO", color = Color.White, style = MaterialTheme.typography.labelSmall)
-                Text(if (isFrontCamera) "SELFIE" else "TRASERA", color = Color.White, style = MaterialTheme.typography.labelSmall)
+                Text("🔴 LENTE EN VIVO", color = Color.Red, style = MaterialTheme.typography.titleMedium)
+                Text(if (isHighQuality) "Calidad: HD" else "Calidad: SD", color = Color.White, style = MaterialTheme.typography.labelMedium)
+            } else {
+                Text("ESPERANDO CONTROL...", color = Color.Yellow, style = MaterialTheme.typography.titleMedium)
             }
         }
     }

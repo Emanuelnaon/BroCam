@@ -39,7 +39,7 @@ android {
 
 dependencies {
     // Para la Cámara (CameraX)
-    val cameraxVersion = "1.4.0"
+    
     implementation(libs.androidx.camera.core)
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)

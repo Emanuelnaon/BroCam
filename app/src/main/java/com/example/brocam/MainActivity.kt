@@ -20,6 +20,7 @@ import com.example.brocam.ui.viewmodel.BroCamViewModel
 
 class MainActivity : ComponentActivity() {
 
+
     private val permissionsToRequest = mutableListOf(
         Manifest.permission.CAMERA,
         Manifest.permission.ACCESS_FINE_LOCATION,
