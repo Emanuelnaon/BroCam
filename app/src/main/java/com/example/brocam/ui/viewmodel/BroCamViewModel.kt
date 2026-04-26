@@ -9,6 +9,8 @@ import androidx.lifecycle.viewModelScope
 import com.example.brocam.AppRole
 import com.example.brocam.UserProfile
 import com.example.brocam.data.NearbyManager
+import com.example.brocam.data.HistoryManager
+import com.example.brocam.data.RecentDevice
 import com.google.android.gms.nearby.connection.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -22,6 +24,10 @@ import kotlinx.coroutines.withContext
 
 class BroCamViewModel(application: Application) : AndroidViewModel(application) {
     private val nearbyManager = NearbyManager(application.applicationContext)
+    private val historyManager = HistoryManager(application.applicationContext)
+
+    private val _recentDevices = MutableStateFlow<List<RecentDevice>>(emptyList())
+    val recentDevices = _recentDevices.asStateFlow()
 
     // =================================================================
     // 🚀 CONFIGURACIÓN DE PRODUCCIÓN
@@ -71,7 +77,13 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
     val connectionState = _connectionState.asStateFlow()
 
     init {
+        loadHistory() // <-- AÑADIR ESTO
         startFrameConsumer()
+    }
+
+    // <-- AÑADIR ESTA FUNCIÓN NUEVA
+    private fun loadHistory() {
+        _recentDevices.value = historyManager.getRecentDevices()
     }
 
     // Dentro de BroCamViewModel.kt
@@ -159,6 +171,8 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
                 if (result.status.isSuccess) {
                     _connectionState.value = ConnectionState(isConnected = true, message = "Listo", connectedEndpointId = id)
                     // Nota: Esperamos a que el Control mande START_STREAM para activar _isStreaming
+                    historyManager.saveDevice(id, "Control ($id)")
+                    loadHistory()
                 }
             }
             override fun onDisconnected(id: String) { resetState() }
@@ -175,6 +189,8 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
                         if (result.status.isSuccess) {
                             _connectionState.value = ConnectionState(isConnected = true, message = "Conectado", connectedEndpointId = id)
                             sendCommand("START_STREAM") // El Control inicia la fiesta
+                            historyManager.saveDevice(id, "Lente ($id)")
+                            loadHistory()
                         }
                     }
                     override fun onDisconnected(id: String) { resetState() }
@@ -224,6 +240,9 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
         _connectionState.value = ConnectionState(isConnected = false, message = "Desconectado", connectedEndpointId = null)
         _isStreaming.value = false
         _receivedFrame.value = null
+
+        _isFlashOn.value = false
+        _isHighQuality.value = false
     }
 
     override fun onCleared() {

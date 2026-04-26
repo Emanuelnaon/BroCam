@@ -39,7 +39,7 @@ android {
 
 dependencies {
     // Para la Cámara (CameraX)
-    
+    implementation("com.google.code.gson:gson:2.10.1")
     implementation(libs.androidx.camera.core)
     implementation(libs.androidx.camera.camera2)
     implementation(libs.androidx.camera.lifecycle)

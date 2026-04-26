@@ -17,6 +17,11 @@ import com.example.brocam.ui.screens.CameraScreen
 import com.example.brocam.ui.screens.ControlScreen
 import com.example.brocam.ui.screens.WelcomeScreen
 import com.example.brocam.ui.viewmodel.BroCamViewModel
+import com.example.brocam.AppRole
+import com.example.brocam.ui.screens.HomeScreen
+
+
+
 
 class MainActivity : ComponentActivity() {
 
@@ -48,12 +53,29 @@ class MainActivity : ComponentActivity() {
                 Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
 
                     val currentRole by viewModel.currentRole.collectAsState()
+                    val recentDevices by viewModel.recentDevices.collectAsState()
 
+                    // SOLUCIÓN: Dirigir a la pantalla correcta según el rol
                     when (currentRole) {
-                        null -> WelcomeScreen(onRoleSelected = { role -> viewModel.setRole(role) })
-                        AppRole.LENTE -> CameraScreen(viewModel)
-                        AppRole.CONTROL -> ControlScreen(viewModel)
+                        null -> {
+                            // Si no hay rol, mostramos la Home
+                            HomeScreen(
+                                recentDevices = recentDevices,
+                                onRoleSelected = { role -> viewModel.setRole(role) },
+                                onSettingsClick = { /* TODO */ },
+                                onHelpClick = { /* TODO */ }
+                            )
+                        }
+                        AppRole.LENTE -> {
+                            // Si eligió Lente, abrimos la cámara
+                            CameraScreen(viewModel = viewModel)
+                        }
+                        AppRole.CONTROL -> {
+                            // Si eligió Control, abrimos la pantalla del receptor
+                            ControlScreen(viewModel = viewModel)
+                        }
                     }
+
                 }
             }
         }
