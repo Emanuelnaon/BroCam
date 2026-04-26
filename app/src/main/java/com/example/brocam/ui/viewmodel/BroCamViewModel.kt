@@ -143,6 +143,7 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
                                 "START_STREAM" -> _isStreaming.value = true
                                 "STOP_STREAM" -> _isStreaming.value = false
                                 "TAKE_PHOTO" -> _shutterEvent.send(true)
+                                "PHOTO_OK" -> _connectionState.value = _connectionState.value.copy(message = "📸 Foto guardada en Lente")
                                 "QUALITY_HD" -> _isHighQuality.value = true
                                 "QUALITY_SD" -> _isHighQuality.value = false
                                 "FLASH_ON" -> _isFlashOn.value = true

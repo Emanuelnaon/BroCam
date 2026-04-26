@@ -37,14 +37,21 @@ fun CameraScreen(viewModel: BroCamViewModel) {
     val isFrontCamera by viewModel.isFrontCamera.collectAsState()
 
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
-    val imageCapture = remember { ImageCapture.Builder().build() }
+    val imageCapture = remember {
+        ImageCapture.Builder()
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+            .build()
+    }
 
     val cameraProviderState = remember { mutableStateOf<ProcessCameraProvider?>(null) }
     var cameraControl: CameraControl? by remember { mutableStateOf(null) }
     var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
 
     LaunchedEffect(isFlashOn) {
-        if (!isFrontCamera) try { cameraControl?.enableTorch(isFlashOn) } catch (e: Exception) { }
+        if (!isFrontCamera) try {
+            cameraControl?.enableTorch(isFlashOn)
+        } catch (e: Exception) {
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -60,14 +67,16 @@ fun CameraScreen(viewModel: BroCamViewModel) {
 
             imageCapture.takePicture(options, ContextCompat.getMainExecutor(context), object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(res: ImageCapture.OutputFileResults) {
-                    Toast.makeText(context, "📸 Foto Guardada", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "📸 Foto Full HD Guardada", Toast.LENGTH_SHORT).show()
+                    // NUEVO: Le mandamos un mensaje de confirmación al operador remoto
+                    viewModel.sendCommand("PHOTO_OK")
                 }
                 override fun onError(e: ImageCaptureException) {}
             })
         }
     }
 
-    // --- ANALYZER (Optimizando para 2 Teléfonos) ---
+// --- ANALYZER (Optimizando para 2 Teléfonos) ---
     LaunchedEffect(isHighQuality, isFrontCamera, cameraProviderState.value, previewViewRef) {
         val myProvider = cameraProviderState.value
         val myPreviewView = previewViewRef
@@ -76,10 +85,8 @@ fun CameraScreen(viewModel: BroCamViewModel) {
             try {
                 myProvider.unbindAll()
 
-                // 🚀 DESBLOQUEO DE RESOLUCIÓN
-                // SD = 640x480 (VGA). HD = 1280x720 (720p).
                 val targetSize = if (isHighQuality) Size(1280, 720) else Size(640, 480)
-                val minDelay = if (isHighQuality) 80L else 40L // Permitimos más FPS (hasta ~25 FPS)
+                val minDelay = if (isHighQuality) 80L else 40L
 
                 val cameraSelector = if (isFrontCamera) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
 
@@ -87,7 +94,9 @@ fun CameraScreen(viewModel: BroCamViewModel) {
                     .setResolutionStrategy(ResolutionStrategy(targetSize, ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER))
                     .build()
 
+                // Quitamos el setTargetRotation manual. Dejaremos que PreviewView haga su magia.
                 val preview = Preview.Builder().build().also { it.setSurfaceProvider(myPreviewView.surfaceProvider) }
+
                 val analyzer = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .setResolutionSelector(resolutionSelector)
@@ -99,19 +108,26 @@ fun CameraScreen(viewModel: BroCamViewModel) {
                     if (isStreaming && (currentTime - lastFrameTime > minDelay)) {
                         lastFrameTime = currentTime
                         val stream = ByteArrayOutputStream()
-
-                        // Ajuste de compresión: 30% para SD, 20% para HD (para no saturar el WiFi)
                         val quality = if (isHighQuality) 70 else 60
-                        proxy.toBitmap().compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, stream)
 
-                        // Empujamos al canal. El CONFLATED se encargará si la red va lenta.
+                        // 🛠️ FIX 1 (PARA EL CONTROL): Enderezar la imagen antes de enviarla
+                        val bitmap = proxy.toBitmap()
+                        val rotationDegrees = proxy.imageInfo.rotationDegrees.toFloat()
+
+                        val finalBitmap = if (rotationDegrees != 0f) {
+                            val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees) }
+                            android.graphics.Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+                        } else {
+                            bitmap
+                        }
+
+                        finalBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, stream)
                         viewModel.enqueueFrame(stream.toByteArray())
                         stream.close()
                     }
                     proxy.close()
                 }
 
-                // Vinculamos cámara, vista previa, análisis de imagen y captura de foto
                 val camera = myProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, analyzer, imageCapture)
                 cameraControl = camera.cameraControl
                 if (!isFrontCamera && isFlashOn) cameraControl?.enableTorch(true)
@@ -119,13 +135,19 @@ fun CameraScreen(viewModel: BroCamViewModel) {
         }
     }
 
-    BackHandler { viewModel.setRole(null) }
-
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        // VISTA PREVIA LIMPIA A PANTALLA COMPLETA
+        // --- 2. EL VISOR CORREGIDO ---
         AndroidView(
             factory = { ctx ->
-                val pv = PreviewView(ctx)
+                val pv = PreviewView(ctx).apply {
+                    // CORRECCIÓN: Usamos FrameLayout para quitar el error rojo
+                    layoutParams = android.widget.FrameLayout.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    scaleType = PreviewView.ScaleType.FILL_CENTER
+                    implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                }
                 previewViewRef = pv
                 ProcessCameraProvider.getInstance(ctx).addListener({
                     cameraProviderState.value = ProcessCameraProvider.getInstance(ctx).get()
