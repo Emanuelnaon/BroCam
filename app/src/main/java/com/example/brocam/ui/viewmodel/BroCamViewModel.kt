@@ -76,12 +76,13 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
     private val _connectionState = MutableStateFlow(ConnectionState())
     val connectionState = _connectionState.asStateFlow()
 
+    private val deviceNamesMap = mutableMapOf<String, String>()
+
     init {
-        loadHistory() // <-- AÑADIR ESTO
+        loadHistory()
         startFrameConsumer()
     }
 
-    // <-- AÑADIR ESTA FUNCIÓN NUEVA
     private fun loadHistory() {
         _recentDevices.value = historyManager.getRecentDevices()
     }
@@ -165,14 +166,21 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun startLenteMode() {
         _connectionState.value = ConnectionState(message = "Haciéndome visible...")
-        // Ya no forzamos conexión falsa. Esperamos a Nearby real.
         nearbyManager.startAdvertising(object : ConnectionLifecycleCallback() {
-            override fun onConnectionInitiated(id: String, info: ConnectionInfo) { nearbyManager.acceptConnection(id, payloadCallback) }
+
+            override fun onConnectionInitiated(id: String, info: ConnectionInfo) {
+                // 🛠️ ATRAPAMOS EL NOMBRE REAL (ej. "moto g56")
+                deviceNamesMap[id] = info.endpointName
+                nearbyManager.acceptConnection(id, payloadCallback)
+            }
+
             override fun onConnectionResult(id: String, result: ConnectionResolution) {
                 if (result.status.isSuccess) {
                     _connectionState.value = ConnectionState(isConnected = true, message = "Listo", connectedEndpointId = id)
-                    // Nota: Esperamos a que el Control mande START_STREAM para activar _isStreaming
-                    historyManager.saveDevice(id, "Control ($id)")
+
+                    // 🛠️ USAMOS EL NOMBRE REAL PARA GUARDAR
+                    val realName = deviceNamesMap[id] ?: "Dispositivo"
+                    historyManager.saveDevice(id, "Control ($realName)")
                     loadHistory()
                 }
             }
@@ -185,12 +193,21 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
         nearbyManager.startDiscovery(object : EndpointDiscoveryCallback() {
             override fun onEndpointFound(id: String, info: DiscoveredEndpointInfo) {
                 nearbyManager.requestConnection(id, object : ConnectionLifecycleCallback() {
-                    override fun onConnectionInitiated(id: String, info: ConnectionInfo) { nearbyManager.acceptConnection(id, payloadCallback) }
+
+                    override fun onConnectionInitiated(id: String, info: ConnectionInfo) {
+                        // 🛠️ ATRAPAMOS EL NOMBRE REAL
+                        deviceNamesMap[id] = info.endpointName
+                        nearbyManager.acceptConnection(id, payloadCallback)
+                    }
+
                     override fun onConnectionResult(id: String, result: ConnectionResolution) {
                         if (result.status.isSuccess) {
                             _connectionState.value = ConnectionState(isConnected = true, message = "Conectado", connectedEndpointId = id)
-                            sendCommand("START_STREAM") // El Control inicia la fiesta
-                            historyManager.saveDevice(id, "Lente ($id)")
+                            sendCommand("START_STREAM")
+
+                            // 🛠️ USAMOS EL NOMBRE REAL PARA GUARDAR
+                            val realName = deviceNamesMap[id] ?: "Dispositivo"
+                            historyManager.saveDevice(id, "Lente ($realName)")
                             loadHistory()
                         }
                     }
