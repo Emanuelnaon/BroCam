@@ -1,5 +1,5 @@
 package com.example.brocam.ui.screens
-
+/*HomeScreen*/
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -102,13 +102,18 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Lista temporal (Mockup) hasta que conectemos la base de datos local
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                items(2) { index ->
-                    RecentDeviceItem(
-                        deviceName = if (index == 0) "Moto G56 (Lente)" else "Tablet Samsung",
-                        date = if (index == 0) "Hoy, 14:30" else "Ayer, 09:15"
-                    )
+            // 🛠️ LISTA REAL CONECTADA A LA BASE DE DATOS LOCAL
+            if (recentDevices.isEmpty()) {
+                Text("No hay conexiones recientes.", color = Color.Gray, modifier = Modifier.padding(top = 16.dp))
+            } else {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(recentDevices.size) { index ->
+                        val device = recentDevices[index]
+                        RecentDeviceItem(
+                            deviceName = device.deviceName,
+                            date = device.getFormattedDate()
+                        )
+                    }
                 }
             }
         }

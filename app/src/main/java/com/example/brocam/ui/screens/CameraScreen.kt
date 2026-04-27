@@ -1,5 +1,5 @@
 package com.example.brocam.ui.screens
-
+/*CameraScreen*/
 import android.content.ContentValues
 import android.provider.MediaStore
 import android.util.Size
@@ -10,9 +10,13 @@ import androidx.camera.core.resolutionselector.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -35,6 +39,7 @@ fun CameraScreen(viewModel: BroCamViewModel) {
     val isHighQuality by viewModel.isHighQuality.collectAsState()
     val isFlashOn by viewModel.isFlashOn.collectAsState()
     val isFrontCamera by viewModel.isFrontCamera.collectAsState()
+    var isBatterySaverMode by remember { mutableStateOf(false) }
 
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
     val imageCapture = remember {
@@ -57,7 +62,10 @@ fun CameraScreen(viewModel: BroCamViewModel) {
     LaunchedEffect(Unit) {
         viewModel.shutterEvent.collect {
             val contentValues = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, "BroCam_${System.currentTimeMillis()}.jpg")
+                put(
+                    MediaStore.MediaColumns.DISPLAY_NAME,
+                    "BroCam_${System.currentTimeMillis()}.jpg"
+                )
                 put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
                 put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/BroCam")
             }
@@ -65,14 +73,19 @@ fun CameraScreen(viewModel: BroCamViewModel) {
                 context.contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues
             ).build()
 
-            imageCapture.takePicture(options, ContextCompat.getMainExecutor(context), object : ImageCapture.OnImageSavedCallback {
-                override fun onImageSaved(res: ImageCapture.OutputFileResults) {
-                    Toast.makeText(context, "📸 Foto Full HD Guardada", Toast.LENGTH_SHORT).show()
-                    // NUEVO: Le mandamos un mensaje de confirmación al operador remoto
-                    viewModel.sendCommand("PHOTO_OK")
-                }
-                override fun onError(e: ImageCaptureException) {}
-            })
+            imageCapture.takePicture(
+                options,
+                ContextCompat.getMainExecutor(context),
+                object : ImageCapture.OnImageSavedCallback {
+                    override fun onImageSaved(res: ImageCapture.OutputFileResults) {
+                        Toast.makeText(context, "📸 Foto Full HD Guardada", Toast.LENGTH_SHORT)
+                            .show()
+                        // NUEVO: Le mandamos un mensaje de confirmación al operador remoto
+                        viewModel.sendCommand("PHOTO_OK")
+                    }
+
+                    override fun onError(e: ImageCaptureException) {}
+                })
         }
     }
 
@@ -88,14 +101,21 @@ fun CameraScreen(viewModel: BroCamViewModel) {
                 val targetSize = if (isHighQuality) Size(1280, 720) else Size(640, 480)
                 val minDelay = if (isHighQuality) 80L else 40L
 
-                val cameraSelector = if (isFrontCamera) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
+                val cameraSelector =
+                    if (isFrontCamera) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
 
                 val resolutionSelector = ResolutionSelector.Builder()
-                    .setResolutionStrategy(ResolutionStrategy(targetSize, ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER))
+                    .setResolutionStrategy(
+                        ResolutionStrategy(
+                            targetSize,
+                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
+                        )
+                    )
                     .build()
 
                 // Quitamos el setTargetRotation manual. Dejaremos que PreviewView haga su magia.
-                val preview = Preview.Builder().build().also { it.setSurfaceProvider(myPreviewView.surfaceProvider) }
+                val preview = Preview.Builder().build()
+                    .also { it.setSurfaceProvider(myPreviewView.surfaceProvider) }
 
                 val analyzer = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
@@ -115,55 +135,128 @@ fun CameraScreen(viewModel: BroCamViewModel) {
                         val rotationDegrees = proxy.imageInfo.rotationDegrees.toFloat()
 
                         val finalBitmap = if (rotationDegrees != 0f) {
-                            val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees) }
-                            android.graphics.Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+                            val matrix =
+                                android.graphics.Matrix().apply { postRotate(rotationDegrees) }
+                            android.graphics.Bitmap.createBitmap(
+                                bitmap,
+                                0,
+                                0,
+                                bitmap.width,
+                                bitmap.height,
+                                matrix,
+                                true
+                            )
                         } else {
                             bitmap
                         }
 
-                        finalBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, stream)
+                        finalBitmap.compress(
+                            android.graphics.Bitmap.CompressFormat.JPEG,
+                            quality,
+                            stream
+                        )
                         viewModel.enqueueFrame(stream.toByteArray())
                         stream.close()
                     }
                     proxy.close()
                 }
 
-                val camera = myProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, analyzer, imageCapture)
+                val camera = myProvider.bindToLifecycle(
+                    lifecycleOwner,
+                    cameraSelector,
+                    preview,
+                    analyzer,
+                    imageCapture
+                )
                 cameraControl = camera.cameraControl
                 if (!isFrontCamera && isFlashOn) cameraControl?.enableTorch(true)
-            } catch (e: Exception) { }
+            } catch (e: Exception) {
+            }
         }
     }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        // --- 2. EL VISOR CORREGIDO ---
-        AndroidView(
-            factory = { ctx ->
-                val pv = PreviewView(ctx).apply {
-                    // CORRECCIÓN: Usamos FrameLayout para quitar el error rojo
-                    layoutParams = android.widget.FrameLayout.LayoutParams(
-                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
-                    )
-                    scaleType = PreviewView.ScaleType.FILL_CENTER
-                    implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                }
-                previewViewRef = pv
-                ProcessCameraProvider.getInstance(ctx).addListener({
-                    cameraProviderState.value = ProcessCameraProvider.getInstance(ctx).get()
-                }, ContextCompat.getMainExecutor(ctx))
-                pv
-            },
-            modifier = Modifier.fillMaxSize()
-        )
 
-        // INFO DE ESTADO DE PRODUCCIÓN
-        Column(Modifier.align(Alignment.TopEnd).padding(16.dp), horizontalAlignment = Alignment.End) {
-            if (isStreaming) {
-                Text("🔴 LENTE EN VIVO", color = Color.Red, style = MaterialTheme.typography.titleMedium)
-                Text(if (isHighQuality) "Calidad: HD" else "Calidad: SD", color = Color.White, style = MaterialTheme.typography.labelMedium)
-            } else {
-                Text("ESPERANDO CONTROL...", color = Color.Yellow, style = MaterialTheme.typography.titleMedium)
+        // --- VISOR DE LA CÁMARA (Solo se muestra si NO estamos en ahorro) ---
+        if (!isBatterySaverMode) {
+            AndroidView(
+                factory = { ctx ->
+                    val pv = PreviewView(ctx).apply {
+                        layoutParams = android.widget.FrameLayout.LayoutParams(
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                            android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                        )
+                        scaleType = PreviewView.ScaleType.FILL_CENTER
+                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                    }
+                    previewViewRef = pv
+                    ProcessCameraProvider.getInstance(ctx).addListener({
+                        cameraProviderState.value = ProcessCameraProvider.getInstance(ctx).get()
+                    }, ContextCompat.getMainExecutor(ctx))
+                    pv
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+
+            // BOTÓN DE AHORRO DE ENERGÍA (Flotante abajo)
+            Button(
+                onClick = { isBatterySaverMode = true },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(bottom = 32.dp),
+                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFF1E293B).copy(alpha = 0.8f) // Slate oscuro semitransparente
+                )
+            ) {
+                Text("Modo Ahorro (Apagar Pantalla)", color = Color.White)
+            }
+
+            // INFO DE ESTADO DE PRODUCCIÓN (Arriba a la derecha)
+            Column(
+                Modifier.align(Alignment.TopEnd).padding(16.dp),
+                horizontalAlignment = Alignment.End
+            ) {
+                if (isStreaming) {
+                    Text(
+                        "🔴 LENTE EN VIVO",
+                        color = Color.Red,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        if (isHighQuality) "Calidad: HD" else "Calidad: SD",
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                } else {
+                    Text(
+                        "ESPERANDO CONTROL...",
+                        color = Color.Yellow,
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
+            }
+        } else {
+            // --- MODO AHORRO DE ENERGÍA ACTIVO (PANTALLA NEGRA) ---
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.Black)
+                    .clickable {
+                        isBatterySaverMode = false
+                    }, // Tocar cualquier lado para despertar
+                contentAlignment = Alignment.Center
+            ) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    androidx.compose.material.icons.Icons.Default.Info // Asegúrate de tener importado Info si no lo tienes, o quita esta línea de icono
+                    Text(
+                        "PANTALLA APAGADA\nTRANSMITIENDO",
+                        color = Color.DarkGray,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        style = MaterialTheme.typography.titleLarge
+                    )
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("Toca la pantalla para encender", color = Color.Gray)
+                }
             }
         }
     }

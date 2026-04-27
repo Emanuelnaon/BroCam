@@ -1,4 +1,5 @@
 package com.example.brocam.ui.screens
+/* ControlScreen */
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
@@ -23,9 +24,12 @@ import com.example.brocam.ui.viewmodel.BroCamViewModel
 
 @Composable
 fun ControlScreen(viewModel: BroCamViewModel) {
-    val remoteFrame by viewModel.receivedFrame.collectAsState()
+    val isStreaming by viewModel.isStreaming.collectAsState()
     val isHighQuality by viewModel.isHighQuality.collectAsState()
     val isFlashOn by viewModel.isFlashOn.collectAsState()
+    val isFrontCamera by viewModel.isFrontCamera.collectAsState()
+    val connectionState by viewModel.connectionState.collectAsState()
+    val remoteFrame by viewModel.receivedFrame.collectAsState() // 🛠️ FALTABA ESTA LÍNEA
 
     BackHandler { viewModel.setRole(null) }
 
@@ -40,6 +44,20 @@ fun ControlScreen(viewModel: BroCamViewModel) {
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                 CircularProgressIndicator(color = Color.White)
                 Text("Conectando...", color = Color.White)
+            }
+        }
+
+        // 🛠️ NUEVO: AVISO REMOTO DE FOTO GUARDADA
+        if (connectionState.message.contains("Foto")) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(Color(0xFFF59E0B).copy(alpha = 0.9f))
+                    .padding(12.dp)
+                    .align(Alignment.TopCenter),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(connectionState.message, color = Color.Black, fontWeight = FontWeight.Bold)
             }
         }
 
@@ -59,7 +77,6 @@ fun ControlScreen(viewModel: BroCamViewModel) {
                     Text(if (isHighQuality) "HD" else "SD")
                 }
 
-                // ARREGLO: Usamos iconos estándar (Star = Flash On, Close = Flash Off)
                 Button(
                     onClick = { viewModel.toggleFlash() },
                     colors = ButtonDefaults.buttonColors(
