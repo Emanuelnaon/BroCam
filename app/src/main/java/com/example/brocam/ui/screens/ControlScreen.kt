@@ -53,6 +53,7 @@ fun ControlScreen(viewModel: BroCamViewModel) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color(0xFFF59E0B).copy(alpha = 0.9f))
+                    .statusBarsPadding()
                     .padding(12.dp)
                     .align(Alignment.TopCenter),
                 contentAlignment = Alignment.Center
