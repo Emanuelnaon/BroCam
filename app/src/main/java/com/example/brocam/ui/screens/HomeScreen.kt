@@ -1,5 +1,5 @@
 package com.example.brocam.ui.screens
-/*HomeScreen*/
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -12,6 +12,10 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -36,6 +40,10 @@ fun HomeScreen(
     val lenteColor = Color(0xFF06B6D4) // Cyan 500
     val controlColor = Color(0xFFF59E0B) // Amber 500
 
+    // Variables para controlar los paneles deslizables
+    var showInfoSheet by remember { mutableStateOf(false) }
+    var showSettingsSheet by remember { mutableStateOf(false) }
+
     Scaffold(
         containerColor = bgColor,
         topBar = {
@@ -43,10 +51,10 @@ fun HomeScreen(
                 title = { Text("BROCAM", fontWeight = FontWeight.Black, color = Color.White, letterSpacing = 2.sp) },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = bgColor),
                 actions = {
-                    IconButton(onClick = onHelpClick) {
+                    IconButton(onClick = { showInfoSheet = true }){
                         Icon(Icons.Default.Info, contentDescription = "Ayuda", tint = Color.LightGray)
                     }
-                    IconButton(onClick = onSettingsClick) {
+                    IconButton(onClick ={ showSettingsSheet = true }){
                         Icon(Icons.Default.Settings, contentDescription = "Configuración", tint = Color.LightGray)
                     }
                 }
@@ -90,7 +98,7 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(40.dp))
 
-            // SECCIÓN: DISPOSITIVOS FRECUENTES (Estructura visual para el paso 2)
+            // SECCIÓN: DISPOSITIVOS FRECUENTES
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -102,7 +110,7 @@ fun HomeScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // 🛠️ LISTA REAL CONECTADA A LA BASE DE DATOS LOCAL
+            // LISTA REAL CONECTADA A LA BASE DE DATOS LOCAL
             if (recentDevices.isEmpty()) {
                 Text("No hay conexiones recientes.", color = Color.Gray, modifier = Modifier.padding(top = 16.dp))
             } else {
@@ -115,6 +123,77 @@ fun HomeScreen(
                         )
                     }
                 }
+            }
+        }
+    }
+
+    // --- PANEL DE INFORMACIÓN (TUTORIAL) ---
+    if (showInfoSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showInfoSheet = false },
+            containerColor = cardColor
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("Manual de Uso Rápido", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Text(
+                    "1. Lente vs Control: Un dispositivo debe ser el 'Lente' (cámara) y otro el 'Control' (pantalla remota). Inicia siempre el Lente primero.\n\n" +
+                            "2. Fotos HD: Las fotos de alta resolución se guardan directamente en la galería del dispositivo LENTE, no en el Control.\n\n" +
+                            "3. Ahorro de Energía: Si eres el Lente, usa el botón de 'Modo Ahorro' para apagar la pantalla y ahorrar batería mientras sigues transmitiendo.",
+                    color = Color.LightGray,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp
+                )
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Button(
+                    onClick = { showInfoSheet = false },
+                    colors = ButtonDefaults.buttonColors(containerColor = lenteColor)
+                ) {
+                    Text("Entendido", color = Color.Black, fontWeight = FontWeight.Bold)
+                }
+                Spacer(modifier = Modifier.height(32.dp))
+            }
+        }
+    }
+
+    // --- PANEL DE CONFIGURACIÓN (AJUSTES) ---
+    if (showSettingsSheet) {
+        ModalBottomSheet(
+            onDismissRequest = { showSettingsSheet = false },
+            containerColor = cardColor
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.Start
+            ) {
+                Text("Configuración de BroCam", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("Ajustes generales para tus sesiones de trabajo.", color = Color.Gray, fontSize = 14.sp)
+
+                Spacer(modifier = Modifier.height(24.dp))
+
+                Text("Próximamente: Ajustes de calidad por defecto y gestión de almacenamiento local.", color = lenteColor, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+
+                Spacer(modifier = Modifier.height(32.dp))
+
+                Button(
+                    onClick = { showSettingsSheet = false },
+                    modifier = Modifier.align(Alignment.End),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray)
+                ) {
+                    Text("Cerrar", color = Color.White)
+                }
+                Spacer(modifier = Modifier.height(16.dp))
             }
         }
     }
