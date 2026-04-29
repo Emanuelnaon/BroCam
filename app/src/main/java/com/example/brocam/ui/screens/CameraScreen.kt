@@ -177,77 +177,67 @@ fun CameraScreen(viewModel: BroCamViewModel) {
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
 
-        // --- VISOR DE LA CÁMARA (Solo se muestra si NO estamos en ahorro) ---
-        if (!isBatterySaverMode) {
-            AndroidView(
-                factory = { ctx ->
-                    val pv = PreviewView(ctx).apply {
-                        layoutParams = android.widget.FrameLayout.LayoutParams(
-                            android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                            android.view.ViewGroup.LayoutParams.MATCH_PARENT
-                        )
-                        scaleType = PreviewView.ScaleType.FILL_CENTER
-                        implementationMode = PreviewView.ImplementationMode.COMPATIBLE
-                    }
-                    previewViewRef = pv
-                    ProcessCameraProvider.getInstance(ctx).addListener({
-                        cameraProviderState.value = ProcessCameraProvider.getInstance(ctx).get()
-                    }, ContextCompat.getMainExecutor(ctx))
-                    pv
-                },
-                modifier = Modifier.fillMaxSize()
-            )
+        // 1. LA CÁMARA SIEMPRE EXISTE (Capa Base)
+        // Al no estar dentro de un 'if', nunca se desconecta del hardware.
+        AndroidView(
+            factory = { ctx ->
+                val pv = PreviewView(ctx).apply {
+                    layoutParams = android.widget.FrameLayout.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    scaleType = PreviewView.ScaleType.FILL_CENTER
+                    implementationMode = PreviewView.ImplementationMode.COMPATIBLE
+                }
+                previewViewRef = pv
+                ProcessCameraProvider.getInstance(ctx).addListener({
+                    cameraProviderState.value = ProcessCameraProvider.getInstance(ctx).get()
+                }, ContextCompat.getMainExecutor(ctx))
+                pv
+            },
+            modifier = Modifier.fillMaxSize()
+        )
 
-            // BOTÓN DE AHORRO DE ENERGÍA (Flotante abajo)
+        // 2. UI NORMAL (Capa Intermedia - Solo se muestra si NO hay ahorro)
+        if (!isBatterySaverMode) {
+            // BOTÓN DE AHORRO DE ENERGÍA
             Button(
                 onClick = { isBatterySaverMode = true },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(bottom = 32.dp),
                 colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF1E293B).copy(alpha = 0.8f) // Slate oscuro semitransparente
+                    containerColor = Color(0xFF1E293B).copy(alpha = 0.8f)
                 )
             ) {
                 Text("Modo Ahorro (Apagar Pantalla)", color = Color.White)
             }
 
-            // INFO DE ESTADO DE PRODUCCIÓN (Arriba a la derecha)
+            // INFO DE ESTADO
             Column(
                 Modifier.align(Alignment.TopEnd).padding(16.dp),
                 horizontalAlignment = Alignment.End
             ) {
                 if (isStreaming) {
-                    Text(
-                        "🔴 LENTE EN VIVO",
-                        color = Color.Red,
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(
-                        if (isHighQuality) "Calidad: HD" else "Calidad: SD",
-                        color = Color.White,
-                        style = MaterialTheme.typography.labelMedium
-                    )
+                    Text("🔴 LENTE EN VIVO", color = Color.Red, style = MaterialTheme.typography.titleMedium)
+                    Text(if (isHighQuality) "Calidad: HD" else "Calidad: SD", color = Color.White, style = MaterialTheme.typography.labelMedium)
                 } else {
-                    Text(
-                        "ESPERANDO CONTROL...",
-                        color = Color.Yellow,
-                        style = MaterialTheme.typography.titleMedium
-                    )
+                    Text("ESPERANDO CONTROL...", color = Color.Yellow, style = MaterialTheme.typography.titleMedium)
                 }
             }
-        } else {
-            // --- MODO AHORRO DE ENERGÍA ACTIVO (PANTALLA NEGRA) ---
+        }
+
+        // 3. LA SÁBANA NEGRA (Capa Superior - Tapa todo cuando SÍ hay ahorro)
+        if (isBatterySaverMode) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.Black)
-                    .clickable {
-                        isBatterySaverMode = false
-                    }, // Tocar cualquier lado para despertar
+                    .background(Color.Black) // El negro puro apaga los LEDs de la pantalla
+                    .clickable { isBatterySaverMode = false }, // Tocar para despertar
                 contentAlignment = Alignment.Center
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    androidx.compose.material.icons.Icons.Default.Info // Asegúrate de tener importado Info si no lo tienes, o quita esta línea de icono
+                    androidx.compose.material.icons.Icons.Default.Info
                     Text(
                         "PANTALLA APAGADA\nTRANSMITIENDO",
                         color = Color.DarkGray,
