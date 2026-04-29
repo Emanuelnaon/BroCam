@@ -61,7 +61,7 @@ class MainActivity : ComponentActivity() {
                             // Si no hay rol, mostramos la Home
                             HomeScreen(
                                 recentDevices = recentDevices,
-                                onRoleSelected = { role -> viewModel.setRole(role) },
+                                onRoleSelected = { role, targetname -> viewModel.setRole(role, targetname) },
                                 onSettingsClick = { /* TODO */ },
                                 onHelpClick = { /* TODO */ }
                             )

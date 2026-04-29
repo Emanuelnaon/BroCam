@@ -124,7 +124,10 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
         frameChannel.trySend(bytes)
     }
 
-    fun setRole(role: AppRole?) {
+    private var targetDeviceName: String? = null // Guardará el nombre del celular que buscamos
+
+    fun setRole(role: AppRole?, targetName: String? = null) {
+        targetDeviceName = targetName // Lo guardamos
         _currentRole.value = role
         when (role) {
             AppRole.LENTE -> startLenteMode()
@@ -192,6 +195,12 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
         _connectionState.value = ConnectionState(message = "Buscando...")
         nearbyManager.startDiscovery(object : EndpointDiscoveryCallback() {
             override fun onEndpointFound(id: String, info: DiscoveredEndpointInfo) {
+                if (targetDeviceName != null && info.endpointName != targetDeviceName) {
+                    Log.d("BroCam", "Ignorando a ${info.endpointName}, buscando a $targetDeviceName")
+                    return // Cortamos la ejecución aquí
+                }
+
+
                 nearbyManager.requestConnection(id, object : ConnectionLifecycleCallback() {
 
                     override fun onConnectionInitiated(id: String, info: ConnectionInfo) {

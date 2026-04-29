@@ -30,7 +30,7 @@ import com.example.brocam.data.RecentDevice
 @Composable
 fun HomeScreen(
     recentDevices: List<RecentDevice>,
-    onRoleSelected: (AppRole) -> Unit,
+    onRoleSelected: (AppRole, String?) -> Unit,
     onSettingsClick: () -> Unit,
     onHelpClick: () -> Unit
 ) {
@@ -82,7 +82,7 @@ fun HomeScreen(
                 subtitle = "Transmite video y recibe órdenes",
                 accentColor = lenteColor,
                 cardColor = cardColor,
-                onClick = { onRoleSelected(AppRole.LENTE) }
+                onClick = { onRoleSelected(AppRole.LENTE, null) }
             )
 
             Spacer(modifier = Modifier.height(20.dp))
@@ -93,7 +93,7 @@ fun HomeScreen(
                 subtitle = "Visualiza y dirige a distancia",
                 accentColor = controlColor,
                 cardColor = cardColor,
-                onClick = { onRoleSelected(AppRole.CONTROL) }
+                onClick = { onRoleSelected(AppRole.CONTROL, null) }
             )
 
             Spacer(modifier = Modifier.height(40.dp))
@@ -119,7 +119,13 @@ fun HomeScreen(
                         val device = recentDevices[index]
                         RecentDeviceItem(
                             deviceName = device.deviceName,
-                            date = device.getFormattedDate()
+                            date = device.getFormattedDate(),
+                            // 🛠️ NUEVO: Lógica de autoconexión
+                            onConnectClick = {
+                                val realName = device.deviceName.substringAfter("(").substringBefore(")")
+                                val autoRole = if (device.deviceName.startsWith("Lente")) AppRole.CONTROL else AppRole.LENTE
+                                onRoleSelected(autoRole, realName)
+                            }
                         )
                     }
                 }
@@ -220,12 +226,12 @@ fun RoleCard(title: String, subtitle: String, accentColor: Color, cardColor: Col
 }
 
 @Composable
-fun RecentDeviceItem(deviceName: String, date: String) {
+fun RecentDeviceItem(deviceName: String, date: String, onConnectClick: () -> Unit) { // 🛠️ Añadimos onConnectClick
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFF1E293B).copy(alpha = 0.5f)) // Slate 800 semitransparente
+            .background(Color(0xFF1E293B).copy(alpha = 0.5f))
             .padding(16.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -235,8 +241,8 @@ fun RecentDeviceItem(deviceName: String, date: String) {
             Text("Última conexión: $date", color = Color.Gray, fontSize = 12.sp)
         }
         Button(
-            onClick = { /* TODO: Reconexión rápida */ },
-            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)) // Slate 700
+            onClick = onConnectClick, // 🛠️ Usamos la función aquí
+            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155))
         ) {
             Text("Conectar")
         }
