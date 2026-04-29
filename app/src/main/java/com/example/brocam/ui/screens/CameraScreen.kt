@@ -41,6 +41,8 @@ fun CameraScreen(viewModel: BroCamViewModel) {
     val isFrontCamera by viewModel.isFrontCamera.collectAsState()
     var isBatterySaverMode by remember { mutableStateOf(false) }
 
+    BackHandler { viewModel.setRole(null) }
+
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
     val imageCapture = remember {
         ImageCapture.Builder()
