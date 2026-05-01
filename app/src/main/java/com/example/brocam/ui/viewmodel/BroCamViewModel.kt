@@ -17,6 +17,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
@@ -58,6 +59,10 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
 
     private val _isFlashOn = MutableStateFlow(false)
     val isFlashOn = _isFlashOn.asStateFlow()
+
+    // Estado para almacenar las coordenadas (X, Y) del láser rojo en el Lente
+    private val _remotePointer = MutableStateFlow<Pair<Float, Float>?>(null)
+    val remotePointer: StateFlow<Pair<Float, Float>?> = _remotePointer
 
     private val _isFrontCamera = MutableStateFlow(false)
     val isFrontCamera = _isFrontCamera.asStateFlow()
@@ -143,17 +148,40 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
                     if (bytes.size < 100) {
                         val command = String(bytes)
                         withContext(Dispatchers.Main) {
-                            when (command) {
-                                "START_STREAM" -> _isStreaming.value = true
-                                "STOP_STREAM" -> _isStreaming.value = false
-                                "TAKE_PHOTO" -> _shutterEvent.send(true)
-                                "PHOTO_OK" -> _connectionState.value = _connectionState.value.copy(message = "📸 Foto guardada en Lente")
-                                "QUALITY_HD" -> _isHighQuality.value = true
-                                "QUALITY_SD" -> _isHighQuality.value = false
-                                "FLASH_ON" -> _isFlashOn.value = true
-                                "FLASH_OFF" -> _isFlashOn.value = false
-                                "CAM_FRONT" -> { _isFrontCamera.value = true; _rotationDegrees.value = 270 }
-                                "CAM_BACK" -> { _isFrontCamera.value = false; _rotationDegrees.value = 90 }
+                            // 1. PRIMERO atrapamos los comandos dinámicos (como el Puntero)
+                            if (command.startsWith("POINTER:")) {
+                                val coords = command.substringAfter("POINTER:").split(",")
+                                if (coords.size == 2) {
+                                    val x = coords[0].toFloatOrNull()
+                                    val y = coords[1].toFloatOrNull()
+                                    if (x != null && y != null) {
+                                        _remotePointer.value = Pair(x, y)
+
+                                        // Borrar el punto después de 2 segundos
+                                        viewModelScope.launch {
+                                            kotlinx.coroutines.delay(2000)
+                                            // Solo lo borramos si no han tocado en otro lado mientras tanto
+                                            if (_remotePointer.value == Pair(x, y)) {
+                                                _remotePointer.value = null
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // 2. SI NO ES DINÁMICO, usamos tu switch normal para los comandos fijos
+                            else {
+                                when (command) {
+                                    "START_STREAM" -> _isStreaming.value = true
+                                    "STOP_STREAM" -> _isStreaming.value = false
+                                    "TAKE_PHOTO" -> _shutterEvent.send(true)
+                                    "PHOTO_OK" -> _connectionState.value = _connectionState.value.copy(message = "📸 Foto guardada en Lente")
+                                    "QUALITY_HD" -> _isHighQuality.value = true
+                                    "QUALITY_SD" -> _isHighQuality.value = false
+                                    "FLASH_ON" -> _isFlashOn.value = true
+                                    "FLASH_OFF" -> _isFlashOn.value = false
+                                    "CAM_FRONT" -> { _isFrontCamera.value = true; _rotationDegrees.value = 270 }
+                                    "CAM_BACK" -> { _isFrontCamera.value = false; _rotationDegrees.value = 90 }
+                                }
                             }
                         }
                     } else {
@@ -187,7 +215,15 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
                     loadHistory()
                 }
             }
-            override fun onDisconnected(id: String) { resetState() }
+            override fun onDisconnected(id: String) {
+                // En vez de resetState(), avisamos que se cortó feo
+                _connectionState.value = ConnectionState(
+                    isConnected = false,
+                    message = "SEÑAL PERDIDA",
+                    connectedEndpointId = null
+                )
+                _isStreaming.value = false
+            }
         })
     }
 
@@ -220,7 +256,15 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
                             loadHistory()
                         }
                     }
-                    override fun onDisconnected(id: String) { resetState() }
+                    override fun onDisconnected(id: String) {
+                        // En vez de resetState(), avisamos que se cortó feo
+                        _connectionState.value = ConnectionState(
+                            isConnected = false,
+                            message = "SEÑAL PERDIDA",
+                            connectedEndpointId = null
+                        )
+                        _isStreaming.value = false
+                    }
                 })
             }
             override fun onEndpointLost(id: String) {}
@@ -240,6 +284,10 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
         sendCommand(if (nv) "FLASH_ON" else "FLASH_OFF")
     }
 
+    fun sendPointer(x: Float, y: Float) {
+        // Reutilizamos tu función envoltorio para que haga la magia
+        sendCommand("POINTER:$x,$y")
+    }
     fun toggleCamera() {
         val nv = !_isFrontCamera.value
         _isFrontCamera.value = nv

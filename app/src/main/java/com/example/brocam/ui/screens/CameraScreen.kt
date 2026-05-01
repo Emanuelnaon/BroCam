@@ -9,6 +9,7 @@ import androidx.camera.core.*
 import androidx.camera.core.resolutionselector.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -34,7 +35,7 @@ import java.util.concurrent.Executors
 fun CameraScreen(viewModel: BroCamViewModel) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-
+    val remotePointer by viewModel.remotePointer.collectAsState()
     val isStreaming by viewModel.isStreaming.collectAsState()
     val isHighQuality by viewModel.isHighQuality.collectAsState()
     val isFlashOn by viewModel.isFlashOn.collectAsState()
@@ -58,6 +59,34 @@ fun CameraScreen(viewModel: BroCamViewModel) {
         if (!isFrontCamera) try {
             cameraControl?.enableTorch(isFlashOn)
         } catch (e: Exception) {
+        }
+    }
+    // 🟠 NUEVO: AUTO-ENFOQUE REMOTO (Tap-to-Focus)
+    LaunchedEffect(remotePointer) {
+        val currentPointer = remotePointer
+        val myPreviewView = previewViewRef
+        val myCameraControl = cameraControl
+
+        // Solo enfocamos si tenemos la posición, la vista de la cámara y los controles listos
+        if (currentPointer != null && myPreviewView != null && myCameraControl != null) {
+            try {
+                // 1. Traducimos el porcentaje a las coordenadas de la cámara
+                val factory = myPreviewView.meteringPointFactory
+                val pointX = currentPointer.first * myPreviewView.width
+                val pointY = currentPointer.second * myPreviewView.height
+
+                // 2. Creamos el punto de enfoque
+                val point = factory.createPoint(pointX, pointY)
+                val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF)
+                    .setAutoCancelDuration(3, java.util.concurrent.TimeUnit.SECONDS) // Vuelve al enfoque automático después de 3 seg
+                    .build()
+
+                // 3. ¡Disparamos el motor del lente físico!
+                myCameraControl.startFocusAndMetering(action)
+
+            } catch (e: Exception) {
+                android.util.Log.e("BroCam_Focus", "Error enfocando: ${e.message}")
+            }
         }
     }
 
@@ -188,7 +217,7 @@ fun CameraScreen(viewModel: BroCamViewModel) {
                         android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                         android.view.ViewGroup.LayoutParams.MATCH_PARENT
                     )
-                    scaleType = PreviewView.ScaleType.FILL_CENTER
+                    scaleType = PreviewView.ScaleType.FIT_CENTER
                     implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                 }
                 previewViewRef = pv
@@ -225,6 +254,28 @@ fun CameraScreen(viewModel: BroCamViewModel) {
                     Text(if (isHighQuality) "Calidad: HD" else "Calidad: SD", color = Color.White, style = MaterialTheme.typography.labelMedium)
                 } else {
                     Text("ESPERANDO CONTROL...", color = Color.Yellow, style = MaterialTheme.typography.titleMedium)
+                }
+            }
+        }
+
+        // 🔴 LA MIRA LÁSER AR (Capa superior de dibujo)
+        if (remotePointer != null) {
+            // Calculamos la proporción del video dependiendo la calidad (en modo vertical)
+            val cameraRatio = if (isHighQuality) 9f / 16f else 3f / 4f
+
+            // Centramos el lienzo para que coincida exactamente con el FIT_CENTER de la cámara
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Canvas(modifier = Modifier.aspectRatio(cameraRatio)) {
+                    val pointX = remotePointer!!.first * size.width
+                    val pointY = remotePointer!!.second * size.height
+
+                    // 1. Círculo rojo central (El puntero)
+                    drawCircle(color = Color.Red, radius = 24f, center = androidx.compose.ui.geometry.Offset(pointX, pointY))
+                    // 2. Anillo blanco exterior
+                    drawCircle(color = Color.White, radius = 28f, center = androidx.compose.ui.geometry.Offset(pointX, pointY), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 6f))
                 }
             }
         }

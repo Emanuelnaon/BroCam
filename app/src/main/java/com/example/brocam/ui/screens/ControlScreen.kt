@@ -1,10 +1,13 @@
 package com.example.brocam.ui.screens
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -20,8 +23,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.brocam.ui.viewmodel.BroCamViewModel
 
 @Composable
@@ -32,20 +37,157 @@ fun ControlScreen(viewModel: BroCamViewModel) {
     val isFrontCamera by viewModel.isFrontCamera.collectAsState() // 🛠️ ¡USADA AHORA!
     val connectionState by viewModel.connectionState.collectAsState()
     val remoteFrame by viewModel.receivedFrame.collectAsState()
+// Estados para la Pizarra Congelada
+    var isFrozen by remember { mutableStateOf(false) }
+    // Guardaremos una lista de trazos. Cada trazo es una lista de puntos (X,Y) relativos
+    var drawingLines by remember { mutableStateOf(listOf<List<Pair<Float, Float>>>()) }
+    var currentLine by remember { mutableStateOf(listOf<Pair<Float, Float>>()) }
+
+    // Guardamos el último frame congelado para no perderlo
+    var frozenFrame by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
 
     BackHandler { viewModel.setRole(null) }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
-        if (remoteFrame != null) {
-            Image(
-                bitmap = remoteFrame!!.asImageBitmap(),
-                contentDescription = "Vista remota",
-                modifier = Modifier.fillMaxSize()
-            )
-        } else {
+
+        if (!connectionState.isConnected && connectionState.message == "SEÑAL PERDIDA") {
+            Column(
+                modifier = Modifier.align(Alignment.Center).padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Icon(
+                    imageVector = androidx.compose.material.icons.Icons.Default.Close,
+                    contentDescription = "Desconectado",
+                    tint = Color.Red,
+                    modifier = Modifier.size(64.dp)
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                Text("CONEXIÓN PERDIDA", color = Color.Red, fontWeight = FontWeight.Black, fontSize = 24.sp)
+                Spacer(modifier = Modifier.height(8.dp))
+                Text("El Lente se apagó o salió del rango.", color = Color.LightGray)
+                Spacer(modifier = Modifier.height(24.dp))
+                Button(
+                    onClick = { viewModel.setRole(null) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray)
+                ) {
+                    Text("Volver al Inicio")
+                }
+            }
+        }
+
+// 2. VIDEO EN VIVO (O CONGELADO)
+        else if (remoteFrame != null || frozenFrame != null) {
+            // Si estamos congelados mostramos el frame guardado, si no, el en vivo
+            val displayBitmap = if (isFrozen) frozenFrame else remoteFrame
+            val imageRatio = displayBitmap!!.width.toFloat() / displayBitmap.height.toFloat()
+
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                Image(
+                    bitmap = displayBitmap.asImageBitmap(),
+                    contentDescription = "Vista remota",
+                    modifier = Modifier
+                        .aspectRatio(imageRatio)
+                        .pointerInput(isFrozen) { // 🛠️ Reacciona a cambios en isFrozen
+                            if (!isFrozen) {
+                                // --- MODO NORMAL: LÁSER AR ---
+                                detectDragGestures { change, _ ->
+                                    change.consume()
+                                    val xP = (change.position.x / size.width.toFloat()).coerceIn(0f, 1f)
+                                    val yP = (change.position.y / size.height.toFloat()).coerceIn(0f, 1f)
+                                    viewModel.sendPointer(xP, yP)
+                                }
+                            } else {
+                                // --- MODO PIZARRA: DIBUJAR ---
+                                detectDragGestures(
+                                    onDragStart = { offset ->
+                                        // Empezamos un trazo nuevo
+                                        val xP = (offset.x / size.width.toFloat()).coerceIn(0f, 1f)
+                                        val yP = (offset.y / size.height.toFloat()).coerceIn(0f, 1f)
+                                        currentLine = listOf(Pair(xP, yP))
+                                    },
+                                    onDragEnd = {
+                                        // Guardamos el trazo terminado
+                                        drawingLines = drawingLines + listOf(currentLine)
+                                        currentLine = emptyList()
+                                    }
+                                ) { change, _ ->
+                                    change.consume()
+                                    // Agregamos puntos al trazo actual
+                                    val xP = (change.position.x / size.width.toFloat()).coerceIn(0f, 1f)
+                                    val yP = (change.position.y / size.height.toFloat()).coerceIn(0f, 1f)
+                                    currentLine = currentLine + Pair(xP, yP)
+                                }
+                            }
+                        }
+                        // Agregamos el toque rápido (Tap) solo si no está congelado
+                        .pointerInput(isFrozen) {
+                            if (!isFrozen) {
+                                detectTapGestures(
+                                    onTap = { tapOffset ->
+                                        val xP = tapOffset.x / size.width.toFloat()
+                                        val yP = tapOffset.y / size.height.toFloat()
+                                        viewModel.sendPointer(xP, yP)
+                                    }
+                                )
+                            }
+                        }
+                )
+
+                // 🔴 CAPA DE DIBUJO (Solo visible si hay líneas)
+                if (drawingLines.isNotEmpty() || currentLine.isNotEmpty()) {
+                    Canvas(modifier = Modifier.aspectRatio(imageRatio)) {
+                        val strokeWidth = 8f
+                        val color = Color.Red
+
+                        // Dibujamos las líneas guardadas
+                        for (line in drawingLines) {
+                            for (i in 0 until line.size - 1) {
+                                drawLine(
+                                    color = color,
+                                    start = androidx.compose.ui.geometry.Offset(line[i].first * size.width, line[i].second * size.height),
+                                    end = androidx.compose.ui.geometry.Offset(line[i+1].first * size.width, line[i+1].second * size.height),
+                                    strokeWidth = strokeWidth
+                                )
+                            }
+                        }
+                        // Dibujamos la línea que se está haciendo AHORA
+                        for (i in 0 until currentLine.size - 1) {
+                            drawLine(
+                                color = color,
+                                start = androidx.compose.ui.geometry.Offset(currentLine[i].first * size.width, currentLine[i].second * size.height),
+                                end = androidx.compose.ui.geometry.Offset(currentLine[i+1].first * size.width, currentLine[i+1].second * size.height),
+                                strokeWidth = strokeWidth
+                            )
+                        }
+                    }
+                }
+            }
+
+            // BOTÓN PARA CONGELAR / DESCONGELAR (Superpuesto arriba a la izquierda)
+            Button(
+                onClick = {
+                    if (!isFrozen) {
+                        frozenFrame = remoteFrame // Guardamos la foto actual
+                        isFrozen = true
+                    } else {
+                        isFrozen = false
+                        frozenFrame = null
+                        drawingLines = emptyList() // Borramos los dibujos al descongelar
+                    }
+                },
+                modifier = Modifier.padding(16.dp), // .align(Alignment.TopStart) si te pide centrado en un Box externo
+                colors = ButtonDefaults.buttonColors(containerColor = if (isFrozen) Color.Red else Color.DarkGray)
+            ) {
+                Text(if (isFrozen) "DESCONGELAR" else "CONGELAR")
+            }
+        }else {
             Column(Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                 CircularProgressIndicator(color = Color.White)
-                Text("Conectando...", color = Color.White)
+                Spacer(modifier = Modifier.height(16.dp))
+                Text(connectionState.message, color = Color.White)
             }
         }
 
