@@ -1,5 +1,5 @@
 package com.example.brocam.ui.screens
-/*CameraScreen*/
+
 import android.content.ContentValues
 import android.provider.MediaStore
 import android.util.Size
@@ -10,10 +10,17 @@ import androidx.camera.core.resolutionselector.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.Button
@@ -22,7 +29,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
@@ -30,123 +40,105 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.brocam.ui.viewmodel.BroCamViewModel
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.Executors
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 
 @Composable
 fun CameraScreen(viewModel: BroCamViewModel) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val remotePointer by viewModel.remotePointer.collectAsState()
+
+    // ESTADOS
     val isStreaming by viewModel.isStreaming.collectAsState()
     val isHighQuality by viewModel.isHighQuality.collectAsState()
     val isFlashOn by viewModel.isFlashOn.collectAsState()
     val isFrontCamera by viewModel.isFrontCamera.collectAsState()
+    val isSosMode by viewModel.isSosMode.collectAsState()
+
+    // ESTADOS AR Y PIZARRA
+    val remotePointer by viewModel.remotePointer.collectAsState()
+    val annotatedImage by viewModel.annotatedImage.collectAsState()
+    val remoteLiveLine by viewModel.remoteLiveLine.collectAsState()
+
     var isBatterySaverMode by remember { mutableStateOf(false) }
 
     BackHandler { viewModel.setRole(null) }
 
     val analysisExecutor = remember { Executors.newSingleThreadExecutor() }
-    val imageCapture = remember {
-        ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
-            .build()
-    }
+    val imageCapture = remember { ImageCapture.Builder().setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY).build() }
 
     val cameraProviderState = remember { mutableStateOf<ProcessCameraProvider?>(null) }
     var cameraControl: CameraControl? by remember { mutableStateOf(null) }
     var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
 
     LaunchedEffect(isFlashOn) {
-        if (!isFrontCamera) try {
-            cameraControl?.enableTorch(isFlashOn)
-        } catch (e: Exception) {
+        if (!isFrontCamera) try { cameraControl?.enableTorch(isFlashOn) } catch (e: Exception) {}
+    }
+
+    // 🪄 BUCLE ESTROBOSCÓPICO (MODO SOS)
+    LaunchedEffect(isSosMode, isFrontCamera) {
+        if (isSosMode && !isFrontCamera && cameraControl != null) {
+            while (isActive) {
+                try { cameraControl?.enableTorch(true) } catch (e: Exception) {}
+                kotlinx.coroutines.delay(150) // Prende 150 milisegundos
+                try { cameraControl?.enableTorch(false) } catch (e: Exception) {}
+                kotlinx.coroutines.delay(150) // Apaga 150 milisegundos
+            }
+        } else {
+            // Si apagan el SOS, restauramos el flash a su estado normal
+            try { cameraControl?.enableTorch(isFlashOn) } catch (e: Exception) {}
         }
     }
-    // 🟠 NUEVO: AUTO-ENFOQUE REMOTO (Tap-to-Focus)
+
     LaunchedEffect(remotePointer) {
         val currentPointer = remotePointer
         val myPreviewView = previewViewRef
         val myCameraControl = cameraControl
-
-        // Solo enfocamos si tenemos la posición, la vista de la cámara y los controles listos
         if (currentPointer != null && myPreviewView != null && myCameraControl != null) {
             try {
-                // 1. Traducimos el porcentaje a las coordenadas de la cámara
                 val factory = myPreviewView.meteringPointFactory
-                val pointX = currentPointer.first * myPreviewView.width
-                val pointY = currentPointer.second * myPreviewView.height
-
-                // 2. Creamos el punto de enfoque
-                val point = factory.createPoint(pointX, pointY)
-                val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF)
-                    .setAutoCancelDuration(3, java.util.concurrent.TimeUnit.SECONDS) // Vuelve al enfoque automático después de 3 seg
-                    .build()
-
-                // 3. ¡Disparamos el motor del lente físico!
+                val point = factory.createPoint(currentPointer.first * myPreviewView.width, currentPointer.second * myPreviewView.height)
+                val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF).setAutoCancelDuration(3, java.util.concurrent.TimeUnit.SECONDS).build()
                 myCameraControl.startFocusAndMetering(action)
-
-            } catch (e: Exception) {
-                android.util.Log.e("BroCam_Focus", "Error enfocando: ${e.message}")
-            }
+            } catch (e: Exception) { android.util.Log.e("BroCam_Focus", "Error enfocando: ${e.message}") }
         }
     }
 
     LaunchedEffect(Unit) {
         viewModel.shutterEvent.collect {
             val contentValues = ContentValues().apply {
-                put(
-                    MediaStore.MediaColumns.DISPLAY_NAME,
-                    "BroCam_${System.currentTimeMillis()}.jpg"
-                )
+                put(MediaStore.MediaColumns.DISPLAY_NAME, "BroCam_${System.currentTimeMillis()}.jpg")
                 put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
                 put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/BroCam")
             }
-            val options = ImageCapture.OutputFileOptions.Builder(
-                context.contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues
-            ).build()
+            val options = ImageCapture.OutputFileOptions.Builder(context.contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues).build()
 
-            imageCapture.takePicture(
-                options,
-                ContextCompat.getMainExecutor(context),
+            imageCapture.takePicture(options, ContextCompat.getMainExecutor(context),
                 object : ImageCapture.OnImageSavedCallback {
                     override fun onImageSaved(res: ImageCapture.OutputFileResults) {
-                        Toast.makeText(context, "📸 Foto Full HD Guardada", Toast.LENGTH_SHORT)
-                            .show()
-                        // NUEVO: Le mandamos un mensaje de confirmación al operador remoto
+                        Toast.makeText(context, "📸 Foto Full HD Guardada", Toast.LENGTH_SHORT).show()
                         viewModel.sendCommand("PHOTO_OK")
                     }
-
                     override fun onError(e: ImageCaptureException) {}
                 })
         }
     }
 
-// --- ANALYZER (Optimizando para 2 Teléfonos) ---
     LaunchedEffect(isHighQuality, isFrontCamera, cameraProviderState.value, previewViewRef) {
         val myProvider = cameraProviderState.value
         val myPreviewView = previewViewRef
-
         if (myProvider != null && myPreviewView != null) {
             try {
                 myProvider.unbindAll()
-
                 val targetSize = if (isHighQuality) Size(1280, 720) else Size(640, 480)
                 val minDelay = if (isHighQuality) 80L else 40L
+                val cameraSelector = if (isFrontCamera) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
 
-                val cameraSelector =
-                    if (isFrontCamera) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
-
-                val resolutionSelector = ResolutionSelector.Builder()
-                    .setResolutionStrategy(
-                        ResolutionStrategy(
-                            targetSize,
-                            ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER
-                        )
-                    )
-                    .build()
-
-                // Quitamos el setTargetRotation manual. Dejaremos que PreviewView haga su magia.
-                val preview = Preview.Builder().build()
-                    .also { it.setSurfaceProvider(myPreviewView.surfaceProvider) }
+                val resolutionSelector = ResolutionSelector.Builder().setResolutionStrategy(ResolutionStrategy(targetSize, ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)).build()
+                val preview = Preview.Builder().build().also { it.setSurfaceProvider(myPreviewView.surfaceProvider) }
 
                 val analyzer = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
@@ -161,94 +153,49 @@ fun CameraScreen(viewModel: BroCamViewModel) {
                         val stream = ByteArrayOutputStream()
                         val quality = if (isHighQuality) 70 else 60
 
-                        // 🛠️ FIX 1 (PARA EL CONTROL): Enderezar la imagen antes de enviarla
                         val bitmap = proxy.toBitmap()
                         val rotationDegrees = proxy.imageInfo.rotationDegrees.toFloat()
-
                         val finalBitmap = if (rotationDegrees != 0f) {
-                            val matrix =
-                                android.graphics.Matrix().apply { postRotate(rotationDegrees) }
-                            android.graphics.Bitmap.createBitmap(
-                                bitmap,
-                                0,
-                                0,
-                                bitmap.width,
-                                bitmap.height,
-                                matrix,
-                                true
-                            )
-                        } else {
-                            bitmap
-                        }
+                            val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees) }
+                            android.graphics.Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+                        } else bitmap
 
-                        finalBitmap.compress(
-                            android.graphics.Bitmap.CompressFormat.JPEG,
-                            quality,
-                            stream
-                        )
+                        finalBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, stream)
                         viewModel.enqueueFrame(stream.toByteArray())
                         stream.close()
                     }
                     proxy.close()
                 }
 
-                val camera = myProvider.bindToLifecycle(
-                    lifecycleOwner,
-                    cameraSelector,
-                    preview,
-                    analyzer,
-                    imageCapture
-                )
+                val camera = myProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, analyzer, imageCapture)
                 cameraControl = camera.cameraControl
                 if (!isFrontCamera && isFlashOn) cameraControl?.enableTorch(true)
-            } catch (e: Exception) {
-            }
+            } catch (e: Exception) {}
         }
     }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
 
-        // 1. LA CÁMARA SIEMPRE EXISTE (Capa Base)
-        // Al no estar dentro de un 'if', nunca se desconecta del hardware.
+        // 1. CÁMARA (Fondo)
         AndroidView(
             factory = { ctx ->
                 val pv = PreviewView(ctx).apply {
-                    layoutParams = android.widget.FrameLayout.LayoutParams(
-                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
-                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
-                    )
+                    layoutParams = android.widget.FrameLayout.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT)
                     scaleType = PreviewView.ScaleType.FIT_CENTER
                     implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                 }
                 previewViewRef = pv
-                ProcessCameraProvider.getInstance(ctx).addListener({
-                    cameraProviderState.value = ProcessCameraProvider.getInstance(ctx).get()
-                }, ContextCompat.getMainExecutor(ctx))
+                ProcessCameraProvider.getInstance(ctx).addListener({ cameraProviderState.value = ProcessCameraProvider.getInstance(ctx).get() }, ContextCompat.getMainExecutor(ctx))
                 pv
             },
             modifier = Modifier.fillMaxSize()
         )
 
-        // 2. UI NORMAL (Capa Intermedia - Solo se muestra si NO hay ahorro)
+        // 2. UI NORMAL (Solo visible si la pantalla NO está "apagada")
         if (!isBatterySaverMode) {
-            // BOTÓN DE AHORRO DE ENERGÍA
-            Button(
-                onClick = { isBatterySaverMode = true },
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 32.dp),
-                colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                    containerColor = Color(0xFF1E293B).copy(alpha = 0.8f)
-                )
-            ) {
-                Text("Modo Ahorro (Apagar Pantalla)", color = Color.White)
-            }
 
-            // INFO DE ESTADO
-            Column(
-                Modifier.align(Alignment.TopEnd).padding(16.dp),
-                horizontalAlignment = Alignment.End
-            ) {
+            // INFO (Arriba a la derecha)
+            Column(Modifier.align(Alignment.TopEnd).padding(16.dp), horizontalAlignment = Alignment.End) {
                 if (isStreaming) {
                     Text("🔴 LENTE EN VIVO", color = Color.Red, style = MaterialTheme.typography.titleMedium)
                     Text(if (isHighQuality) "Calidad: HD" else "Calidad: SD", color = Color.White, style = MaterialTheme.typography.labelMedium)
@@ -256,49 +203,150 @@ fun CameraScreen(viewModel: BroCamViewModel) {
                     Text("ESPERANDO CONTROL...", color = Color.Yellow, style = MaterialTheme.typography.titleMedium)
                 }
             }
-        }
 
-        // 🔴 LA MIRA LÁSER AR (Capa superior de dibujo)
-        if (remotePointer != null) {
-            // Calculamos la proporción del video dependiendo la calidad (en modo vertical)
-            val cameraRatio = if (isHighQuality) 9f / 16f else 3f / 4f
-
-            // Centramos el lienzo para que coincida exactamente con el FIT_CENTER de la cámara
-            Box(
-                modifier = Modifier.fillMaxSize(),
-                contentAlignment = Alignment.Center
+            // 🛠️ BARRA INFERIOR ORDENADA (Cámara/Flash a la izq, Ahorro a la der)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 16.dp) // 🛠️ CORREGIDO: Separado en dos paddings
+                    .padding(bottom = 32.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Canvas(modifier = Modifier.aspectRatio(cameraRatio)) {
-                    val pointX = remotePointer!!.first * size.width
-                    val pointY = remotePointer!!.second * size.height
+                // Bloque Izquierdo (Flash y Cámara)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { viewModel.toggleFlash() },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isFlashOn) Color(
+                                0xFFFFC107
+                            ) else Color(0xFF1E293B).copy(alpha = 0.8f)
+                        ),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+                        contentPadding = PaddingValues(8.dp)
+                    ) {
+                        androidx.compose.material3.Icon(
+                            imageVector = if (isFlashOn) Icons.Default.Star else Icons.Default.Close,
+                            contentDescription = "Flash",
+                            modifier = Modifier.size(20.dp),
+                            tint = Color.White
+                        )
+                    }
 
-                    // 1. Círculo rojo central (El puntero)
-                    drawCircle(color = Color.Red, radius = 24f, center = androidx.compose.ui.geometry.Offset(pointX, pointY))
-                    // 2. Anillo blanco exterior
-                    drawCircle(color = Color.White, radius = 28f, center = androidx.compose.ui.geometry.Offset(pointX, pointY), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 6f))
+                    Button(
+                        onClick = { viewModel.toggleCamera() },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isFrontCamera) Color(
+                                0xFF06B6D4
+                            ) else Color(0xFF1E293B).copy(alpha = 0.8f)
+                        ),
+                        shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        androidx.compose.material3.Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Voltear",
+                            modifier = Modifier.size(18.dp),
+                            tint = Color.White
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            if (isFrontCamera) "FRONT" else "BACK",
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelSmall
+                        )
+                    }
+                    // 🎙️ NUEVO: BOTÓN PUSH-TO-TALK (WALKIE-TALKIE) FIX
+                    val interactionSource = remember { MutableInteractionSource() }
+                    val isPressed by interactionSource.collectIsPressedAsState()
+
+                    // Esto "escucha" al botón mágicamente
+                    LaunchedEffect(isPressed) {
+                        if (isPressed) {
+                            viewModel.startPushToTalk()
+                        } else {
+                            viewModel.stopPushToTalk()
+                        }
+                    }
+
+                    Button(
+                        onClick = { }, // No usamos esto
+                        interactionSource = interactionSource, // 🛠️ Aquí está la magia
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isPressed) Color(0xFF22C55E) else Color(0xFF2563EB), // Verde al hablar, Azul normal
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(20.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        Text(
+                            if (isPressed) "HABLANDO..." else "🎤 HABLAR",
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+
+                // Bloque Derecho (Apagar Pantalla)
+                Button(
+                    onClick = { isBatterySaverMode = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC3545).copy(alpha = 0.9f)), // Rojo intenso para identificarlo rápido
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    Text("Apagar Pantalla", color = Color.White, style = MaterialTheme.typography.labelSmall)
                 }
             }
         }
 
-        // 3. LA SÁBANA NEGRA (Capa Superior - Tapa todo cuando SÍ hay ahorro)
+        // 🔴 LA MIRA LÁSER AR Y TRAZOS EN VIVO
+        if (remotePointer != null || remoteLiveLine.isNotEmpty()) {
+            val cameraRatio = if (isHighQuality) 9f / 16f else 3f / 4f
+
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Canvas(modifier = Modifier.aspectRatio(cameraRatio)) {
+                    // PUNTERO
+                    if (remotePointer != null) {
+                        val pointX = remotePointer!!.first * size.width
+                        val pointY = remotePointer!!.second * size.height
+                        drawCircle(color = Color.Red, radius = 24f, center = androidx.compose.ui.geometry.Offset(pointX, pointY))
+                        drawCircle(color = Color.White, radius = 28f, center = androidx.compose.ui.geometry.Offset(pointX, pointY), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 6f))
+                    }
+
+                    // 🛠️ LÁPIZ EN VIVO
+                    if (remoteLiveLine.isNotEmpty()) {
+                        for (i in 0 until remoteLiveLine.size - 1) {
+                            drawLine(
+                                color = Color.Red,
+                                start = androidx.compose.ui.geometry.Offset(remoteLiveLine[i].first * size.width, remoteLiveLine[i].second * size.height),
+                                end = androidx.compose.ui.geometry.Offset(remoteLiveLine[i+1].first * size.width, remoteLiveLine[i+1].second * size.height),
+                                strokeWidth = 10f
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. MODO AHORRO (Sábana Negra)
         if (isBatterySaverMode) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black) // El negro puro apaga los LEDs de la pantalla
-                    .clickable { isBatterySaverMode = false }, // Tocar para despertar
-                contentAlignment = Alignment.Center
-            ) {
+            Box(modifier = Modifier.fillMaxSize().background(Color.Black).clickable { isBatterySaverMode = false }, contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    androidx.compose.material.icons.Icons.Default.Info
-                    Text(
-                        "PANTALLA APAGADA\nTRANSMITIENDO",
-                        color = Color.DarkGray,
-                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                        style = MaterialTheme.typography.titleLarge
-                    )
+                    Icons.Default.Info
+                    Text("PANTALLA APAGADA\nTRANSMITIENDO", color = Color.DarkGray, textAlign = androidx.compose.ui.text.style.TextAlign.Center, style = MaterialTheme.typography.titleLarge)
                     Spacer(modifier = Modifier.height(16.dp))
                     Text("Toca la pantalla para encender", color = Color.Gray)
+                }
+            }
+        }
+
+        // 4. CAPA ESTÁTICA DE PIZARRA CONGELADA
+        if (annotatedImage != null) {
+            Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.9f)), contentAlignment = Alignment.Center) {
+                val imageRatio = annotatedImage!!.width.toFloat() / annotatedImage!!.height.toFloat()
+                Image(bitmap = annotatedImage!!.asImageBitmap(), contentDescription = "Indicación", modifier = Modifier.fillMaxWidth().aspectRatio(imageRatio))
+                Button(onClick = { viewModel.clearAnnotatedImage() }, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 48.dp).height(60.dp), colors = ButtonDefaults.buttonColors(containerColor = Color.Red)) {
+                    Text("CERRAR INDICACIÓN (X)", style = MaterialTheme.typography.titleLarge)
                 }
             }
         }
