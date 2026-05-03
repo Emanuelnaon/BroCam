@@ -30,6 +30,18 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Typeface
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import android.location.Location
+import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.Priority as LocationPriority
+import com.google.android.gms.tasks.CancellationTokenSource
+import com.example.brocam.core.camera.VideoEncoderManager
+import android.view.Surface
 
 class BroCamViewModel(application: Application) : AndroidViewModel(application) {
     private val nearbyManager = NearbyManager(application.applicationContext)
@@ -50,6 +62,10 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
     val receivedFrame = _receivedFrame.asStateFlow()
     private val _isStreaming = MutableStateFlow(false)
     val isStreaming = _isStreaming.asStateFlow()
+    // 🎬 MOTOR H.265 ZERO-COPY
+    private var videoEncoder: com.example.brocam.core.camera.VideoEncoderManager? = null
+    // 🎬 MOTOR H.265 RECEPTOR (CONTROL)
+    private var videoDecoder: com.example.brocam.core.camera.VideoDecoderManager? = null
     private val _isHighQuality = MutableStateFlow(false)
     val isHighQuality = _isHighQuality.asStateFlow()
     private val _isFlashOn = MutableStateFlow(false)
@@ -122,14 +138,25 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
             payload.asBytes()?.let { bytes ->
                 viewModelScope.launch(Dispatchers.IO) {
 
-                    // 🛠️ INTERCEPTOR DE AUDIO CON COLA SEGURA
-                    if (bytes.size > 4 && bytes[0] == 'A'.code.toByte() && bytes[1] == 'U'.code.toByte() && bytes[2] == 'D'.code.toByte() && bytes[3] == ':'.code.toByte()) {
-                        startAudioPlayer() // Prende el trabajador (si no estaba prendido ya)
+                    // 1. EXTRAEMOS LA ETIQUETA (Las primeras 4 letras)
+                    val prefix = if (bytes.size >= 4) String(bytes, 0, 4) else ""
+
+                    // 2. ENRUTAMIENTO INTELIGENTE
+                    if (prefix == "VID:") {
+                        // 🎬 ES VIDEO: Lo mandamos al hardware gráfico
+                        val videoData = bytes.copyOfRange(4, bytes.size)
+                        videoDecoder?.decodeRawFrame(videoData)
+                        return@launch
+
+                    } else if (prefix == "AUD:") {
+                        // 🎙️ ES AUDIO: Lo mandamos al Walkie-Talkie
+                        startAudioPlayer()
                         val audioData = bytes.copyOfRange(4, bytes.size)
-                        audioReceiveChannel.trySend(audioData) // Enfila el audio de forma 100% segura
+                        audioReceiveChannel.trySend(audioData)
                         return@launch
                     }
 
+                    // 3. SI NO TIENE ETIQUETA, ES UN COMANDO VIEJO O FOTO CONGELADA
                     if (bytes.size < 8000) {
                         val command = String(bytes)
                         withContext(Dispatchers.Main) {
@@ -146,9 +173,7 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
                                         }
                                     }
                                 }
-                            }
-                            // 🛠️ NUEVO: Atrapamos el garabato en vivo
-                            else if (command.startsWith("LIVELINE:")) {
+                            } else if (command.startsWith("LIVELINE:")) {
                                 val coords = command.substringAfter("LIVELINE:").split(",")
                                 val newLine = mutableListOf<Pair<Float, Float>>()
                                 for (i in 0 until coords.size - 1 step 2) {
@@ -158,7 +183,6 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
                                 }
                                 if (newLine.isNotEmpty()) {
                                     _remoteLiveLine.value = newLine
-                                    // Se auto-borra a los 3 segundos
                                     viewModelScope.launch {
                                         kotlinx.coroutines.delay(3000)
                                         if (_remoteLiveLine.value == newLine) {
@@ -168,8 +192,13 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
                                 }
                             } else {
                                 when (command) {
-                                    "START_STREAM" -> _isStreaming.value = true
-                                    "STOP_STREAM" -> _isStreaming.value = false
+                                    "START_STREAM" -> {
+                                        _isStreaming.value = true
+                                                                            }
+                                    "STOP_STREAM" -> {
+                                        _isStreaming.value = false
+                                        if (_currentRole.value == AppRole.LENTE) stopH265Encoder()
+                                    }
                                     "TAKE_PHOTO" -> _shutterEvent.send(true)
                                     "PHOTO_OK" -> _connectionState.value = _connectionState.value.copy(message = "📸 Foto guardada en Lente")
                                     "QUALITY_HD" -> _isHighQuality.value = true
@@ -185,10 +214,10 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
                             }
                         }
                     } else {
+                        // 🖼️ ES LA PIZARRA CONGELADA (Solo el Lente recibe esto ahora)
                         val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
                         withContext(Dispatchers.Main) {
-                            if (_currentRole.value == AppRole.CONTROL) _receivedFrame.value = bitmap
-                            else if (_currentRole.value == AppRole.LENTE) _annotatedImage.value = bitmap
+                            if (_currentRole.value == AppRole.LENTE) _annotatedImage.value = bitmap
                         }
                     }
                 }
@@ -205,6 +234,38 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
             _isFlashOn.value = false
             sendCommand("FLASH_OFF")
         }
+    }
+
+        // 🚀 PUENTE: De la Cámara al Motor
+        // 🚀 PUENTE INTELIGENTE: De la Cámara al Motor
+        fun feedEncoder(rawBytes: ByteArray, timestampUs: Long, width: Int, height: Int) {
+            // Auto-Arranque: Si el motor está apagado, lo prendemos con las medidas EXACTAS
+            if (videoEncoder == null) {
+                videoEncoder = com.example.brocam.core.camera.VideoEncoderManager(
+                    onVideoDataReady = { chunk ->
+                        if (_isStreaming.value) {
+                            val prefix = "VID:".toByteArray()
+                            enqueueFrame(prefix + chunk)
+                        }
+                    }
+                )
+                videoEncoder?.startEncoder(width, height)
+            }
+
+            // Inyectamos el fotograma
+            videoEncoder?.encodeRawFrame(rawBytes, timestampUs)
+        }
+
+    fun startH265Decoder(surface: android.view.Surface) {
+        if (videoDecoder == null) {
+            videoDecoder = com.example.brocam.core.camera.VideoDecoderManager()
+        }
+        videoDecoder?.startDecoder(surface)
+    }
+
+    fun stopH265Decoder() {
+        videoDecoder?.stopDecoder()
+        videoDecoder = null
     }
 
     // ... (Funciones de conexión startLenteMode y startControlMode idénticas a las que ya tenías) ...
@@ -233,9 +294,14 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
                 if (targetDeviceName != null && info.endpointName != targetDeviceName) return
                 nearbyManager.requestConnection(id, object : ConnectionLifecycleCallback() {
                     override fun onConnectionInitiated(id: String, info: ConnectionInfo) { deviceNamesMap[id] = info.endpointName; nearbyManager.acceptConnection(id, payloadCallback) }
+
                     override fun onConnectionResult(id: String, result: ConnectionResolution) {
                         if (result.status.isSuccess) {
                             _connectionState.value = ConnectionState(isConnected = true, message = "Conectado", connectedEndpointId = id)
+
+                            // 🚀 FIX: Le avisamos al Control que ya estamos en vivo para que dibuje el lienzo
+                            _isStreaming.value = true
+
                             sendCommand("START_STREAM")
                             historyManager.saveDevice(id, "Lente (${deviceNamesMap[id] ?: "Dispositivo"})")
                             loadHistory()
@@ -408,4 +474,79 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
     fun stopPushToTalk() {
         isRecordingAudio = false
     }
+
+    fun drawMetadataOnBitmap(originalBitmap: android.graphics.Bitmap, location: String = "GPS: No disponible"): android.graphics.Bitmap {
+        val bitmap = originalBitmap.copy(android.graphics.Bitmap.Config.ARGB_8888, true)
+        val canvas = Canvas(bitmap)
+
+        val paint = Paint().apply {
+            color = android.graphics.Color.WHITE
+            textSize = bitmap.width / 35f // Un poco más grande para mejor lectura
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            isAntiAlias = true // Suaviza los bordes de las letras
+        }
+
+        paint.setShadowLayer(10f, 0f, 0f, android.graphics.Color.BLACK)
+
+        val date = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault()).format(Date())
+        val margin = 40f
+        val lineSpacing = paint.textSize * 1.2f
+
+        // Dibujamos en la esquina inferior izquierda
+        canvas.drawText("BroCam - Evidencia Forense", margin, bitmap.height - (lineSpacing * 2) - margin, paint)
+        canvas.drawText("Fecha: $date", margin, bitmap.height - lineSpacing - margin, paint)
+        canvas.drawText(location, margin, bitmap.height - margin, paint)
+
+        return bitmap
+    }
+
+    fun fetchCurrentLocation(onLocationResult: (String) -> Unit) {
+        // Usamos la ruta completa para evitar errores de importación
+        val fusedLocationClient = com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(getApplication<Application>())
+
+        if (androidx.core.app.ActivityCompat.checkSelfPermission(getApplication(), android.Manifest.permission.ACCESS_FINE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            onLocationResult("GPS: Sin permiso")
+            return
+        }
+
+        val token = com.google.android.gms.tasks.CancellationTokenSource().token
+
+        // Forzamos la prioridad de Google Play Services directamente
+        fusedLocationClient.getCurrentLocation(com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY, token)
+            .addOnSuccessListener { loc: android.location.Location? ->
+                if (loc != null) {
+                    val latLong = "Lat: ${String.format(java.util.Locale.US, "%.6f", loc.latitude)} | Lon: ${String.format(java.util.Locale.US, "%.6f", loc.longitude)}"
+                    onLocationResult(latLong)
+                } else {
+                    onLocationResult("GPS: Localizando...")
+                }
+            }
+            .addOnFailureListener { exception: Exception -> // 👈 Tipado explícito para 'e'
+                android.util.Log.e("BroCam_GPS", "Error: ${exception.message}")
+                onLocationResult("GPS: Error de sensor")
+            }
+    }
+
+    fun startH265Encoder() {
+        if (videoEncoder != null) return
+
+        videoEncoder = VideoEncoderManager(
+            onVideoDataReady = { chunk ->
+                if (_isStreaming.value) {
+                    // 🏷️ ETIQUETADO DE PAQUETES: Pegamos "VID:" antes de enviar
+                    val prefix = "VID:".toByteArray()
+                    val payloadBytes = prefix + chunk
+                    enqueueFrame(payloadBytes)
+                }
+            }
+        )
+
+        videoEncoder?.startEncoder(1280, 720)
+    }
+
+    fun stopH265Encoder() {
+        videoEncoder?.stopEncoder()
+        videoEncoder = null
+    }
+
 }

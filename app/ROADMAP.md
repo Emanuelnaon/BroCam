@@ -42,34 +42,27 @@ Objetivo: Implementar las herramientas visuales que justifican la monetización 
 🟣 FASE 4: Escalabilidad, Datos y Nivel Enterprise
 Objetivo: Dar el salto al sector corporativo y peritaje con datos validados.
 
-[ ] Migración a H.265 (MediaCodec): Reemplazar MJPEG por hardware para reducir drásticamente el peso de red y mejorar FPS.
-[ ] Marca de Agua + Evidencia: Imprimir coordenadas GPS, fecha y hora (Metadatos) directamente en los píxeles de la foto HD capturada para peritajes.
+✅ Evidencia Forense (GPS + Metadatos): Marca de agua con coordenadas de alta precisión (FusedLocationProvider) y fecha/hora incrustadas directamente en los píxeles de la captura HD. (Completado)
+
+[ ] Migración H.265 (Paso 1) - Motor Zero-Copy: Creación del VideoEncoderManager para conectar el SurfaceProvider de CameraX directo al hardware (MediaCodec), configurando baja latencia e I-Frames.
+
+[ ] Migración H.265 (Paso 2) - Transporte P2P y Fallback: Empaquetar la salida binaria (NAL Units / Annex B) y enviarla por Nearby Connections, incluyendo el rescate automático a H.264 si el Control no soporta HEVC.
+
+[ ] Migración H.265 (Paso 3) - Control Heurístico (BWE): Implementar la lectura de velocidad de red y la adaptación dinámica de Bitrate al vuelo para evitar el estrangulamiento térmico de los equipos.
+
 [ ] Lector Inteligente (OCR/Barcode): Extracción de números de serie y códigos de barras en el Control vía ML Kit usando el Lente remoto.
-[ ] Modo Enterprise (N-a-1 y 1-a-N): Un Control para múltiples Lentes (Centro de Comando) o un Lente transmitiendo a múltiples controles.
-[ ] Captura RAW y Grillas: Soporte para DNG y superposiciones de encuadre (Regla de Tercios, Nivel Digital).
 
-🚀 FASE 5: Expansión Horizontal (Educación y Herramientas IA)
-Análisis de tu Brainstorming
-IA Auto-Tracking para contar o identificar (Visión Artificial):
+[ ] Modo Enterprise (Multidifusión): Soporte N-a-1 y 1-a-N (Un Control para múltiples Lentes, o un Lente transmitiendo a múltiples controles).
 
-Viabilidad: ¡Totalmente factible y muy potente! Google tiene una librería gratuita llamada ML Kit que funciona 100% offline (ideal para nuestra app).
+[ ] Captura RAW y Grillas: Soporte para formato DNG y superposiciones de encuadre en pantalla (Regla de Tercios, Nivel Digital).
 
-Casos de uso: En la industria, el Lente apunta a un palet y la IA cuenta las cajas automáticamente. En educación, podría enfocar un circuito eléctrico y etiquetar resistencias y capacitores en tiempo real en la pantalla de los alumnos.
+🚀 FASE 5: Expansión Horizontal (IA y Herramientas Avanzadas)
+Objetivo: Integración de Visión Artificial offline y herramientas de colaboración masiva.
 
-Picture-in-Picture (PiP) y Duplicar/Castear Pantalla:
+[ ] IA Auto-Tracking (Visión Artificial): Conteo automático de objetos (cajas, pallets) o identificación de componentes (resistencias, capacitores) en tiempo real usando modelos offline de ML Kit.
 
-Viabilidad: Android tiene soporte nativo para PiP. Castear a múltiples dispositivos encaja perfectamente con la meta de "Multidifusión (1-a-N)" que pusimos en la Fase 4.
+[ ] Picture-in-Picture (PiP) y Duplicar Pantalla: Soporte nativo de Android para minimizar el video en vivo, permitiendo al usuario revisar manuales o tomar notas en paralelo.
 
-Casos de uso: Un profesor (Lente) transmitiendo el experimento de química desde su celular hacia las tablets de 30 alumnos (Controles). El alumno puede minimizar el video del profesor (PiP) mientras toma notas en otra app.
+[ ] Traductor en Tiempo Real (Subtítulos): Reconocimiento de voz (Speech-to-Text) y traducción offline para mostrar indicaciones de voz como subtítulos sobre el video.
 
-Traductor en Tiempo Real (Subtítulos):
-
-Viabilidad: Nuevamente, ML Kit ofrece traducción offline y reconocimiento de voz (Speech-to-Text).
-
-Casos de uso: Un técnico en Alemania le habla a su celular en alemán, y el supervisor en Argentina (Control) lee los subtítulos en español superpuestos en el video en vivo.
-
-Alerta Programada / Cambio de Imagen:
-
-Viabilidad: Sencillo de implementar usando temporizadores en Kotlin (Coroutines o WorkManager).
-
-Casos de uso: Mostrar un plano esquemático temporalmente sobre el video, o una alerta de "Cambio de turno" o "Peligro: Válvula abierta por más de 5 minutos".
+[ ] Alertas Programadas / Overlay Dinámico: Sistema de temporizadores (Coroutines/WorkManager) para mostrar advertencias de seguridad o esquemas técnicos superpuestos en la vista del Lente.

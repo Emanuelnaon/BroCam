@@ -9,6 +9,7 @@ import androidx.camera.core.*
 import androidx.camera.core.resolutionselector.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.camera.camera2.interop.Camera2Interop
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -58,6 +59,7 @@ fun CameraScreen(viewModel: BroCamViewModel) {
     val isFrontCamera by viewModel.isFrontCamera.collectAsState()
     val isSosMode by viewModel.isSosMode.collectAsState()
 
+
     // ESTADOS AR Y PIZARRA
     val remotePointer by viewModel.remotePointer.collectAsState()
     val annotatedImage by viewModel.annotatedImage.collectAsState()
@@ -73,6 +75,7 @@ fun CameraScreen(viewModel: BroCamViewModel) {
     val cameraProviderState = remember { mutableStateOf<ProcessCameraProvider?>(null) }
     var cameraControl: CameraControl? by remember { mutableStateOf(null) }
     var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
+
 
     LaunchedEffect(isFlashOn) {
         if (!isFrontCamera) try { cameraControl?.enableTorch(isFlashOn) } catch (e: Exception) {}
@@ -109,70 +112,117 @@ fun CameraScreen(viewModel: BroCamViewModel) {
 
     LaunchedEffect(Unit) {
         viewModel.shutterEvent.collect {
-            val contentValues = ContentValues().apply {
-                put(MediaStore.MediaColumns.DISPLAY_NAME, "BroCam_${System.currentTimeMillis()}.jpg")
-                put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
-                put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/BroCam")
-            }
-            val options = ImageCapture.OutputFileOptions.Builder(context.contentResolver, MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues).build()
+            // 1. Obtenemos GPS dinámico
+            viewModel.fetchCurrentLocation { gpsInfo ->
 
-            imageCapture.takePicture(options, ContextCompat.getMainExecutor(context),
-                object : ImageCapture.OnImageSavedCallback {
-                    override fun onImageSaved(res: ImageCapture.OutputFileResults) {
-                        Toast.makeText(context, "📸 Foto Full HD Guardada", Toast.LENGTH_SHORT).show()
-                        viewModel.sendCommand("PHOTO_OK")
+                // 2. Capturamos la foto en memoria para poder editarla
+                imageCapture.takePicture(ContextCompat.getMainExecutor(context),
+                    object : ImageCapture.OnImageCapturedCallback() {
+                        override fun onCaptureSuccess(image: ImageProxy) {
+                            // Convertimos el Proxy a Bitmap y aplicamos la rotación correcta
+                            val bitmap = image.toBitmap()
+                            val matrix = android.graphics.Matrix().apply {
+                                postRotate(image.imageInfo.rotationDegrees.toFloat())
+                            }
+                            val rotatedBitmap = android.graphics.Bitmap.createBitmap(
+                                bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true
+                            )
+
+                            // 🎨 ESTAMPADO: Aquí aplicamos tu función de la Fase 4
+                            val finalBitmap = viewModel.drawMetadataOnBitmap(rotatedBitmap, gpsInfo)
+
+                            // 💾 GUARDADO MANUAL: Guardamos el bitmap procesado en la galería
+                            saveBitmapToGallery(context, finalBitmap)
+
+                            image.close()
+                            viewModel.sendCommand("PHOTO_OK")
+                            Toast.makeText(context, "📸 Evidencia Guardada: $gpsInfo", Toast.LENGTH_SHORT).show()
+                        }
+
+                        override fun onError(e: ImageCaptureException) {
+                            android.util.Log.e("BroCam_Error", "Error captura: ${e.message}")
+                        }
                     }
-                    override fun onError(e: ImageCaptureException) {}
-                })
+                )
+            }
         }
     }
 
     LaunchedEffect(isHighQuality, isFrontCamera, cameraProviderState.value, previewViewRef) {
         val myProvider = cameraProviderState.value
         val myPreviewView = previewViewRef
+
         if (myProvider != null && myPreviewView != null) {
             try {
                 myProvider.unbindAll()
+
                 val targetSize = if (isHighQuality) Size(1280, 720) else Size(640, 480)
-                val minDelay = if (isHighQuality) 80L else 40L
                 val cameraSelector = if (isFrontCamera) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
 
-                val resolutionSelector = ResolutionSelector.Builder().setResolutionStrategy(ResolutionStrategy(targetSize, ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)).build()
-                val preview = Preview.Builder().build().also { it.setSurfaceProvider(myPreviewView.surfaceProvider) }
+                // 1. Pantalla del Usuario
+                val preview = Preview.Builder().build().also {
+                    it.setSurfaceProvider(myPreviewView.surfaceProvider)
+                }
 
+                // 2. Analizador de Imagen (NUESTRO PUENTE AL H.265)
                 val analyzer = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                    .setResolutionSelector(resolutionSelector)
+                    .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888) // 👈 Pedimos bytes puros
+                    .setResolutionSelector(ResolutionSelector.Builder().setResolutionStrategy(ResolutionStrategy(targetSize, ResolutionStrategy.FALLBACK_RULE_CLOSEST_HIGHER_THEN_LOWER)).build())
                     .build()
 
-                var lastFrameTime = 0L
                 analyzer.setAnalyzer(analysisExecutor) { proxy ->
-                    val currentTime = System.currentTimeMillis()
-                    if (isStreaming && (currentTime - lastFrameTime > minDelay)) {
-                        lastFrameTime = currentTime
-                        val stream = ByteArrayOutputStream()
-                        val quality = if (isHighQuality) 70 else 60
+                    if (isStreaming) {
+                        val width = proxy.width
+                        val height = proxy.height
 
-                        val bitmap = proxy.toBitmap()
-                        val rotationDegrees = proxy.imageInfo.rotationDegrees.toFloat()
-                        val finalBitmap = if (rotationDegrees != 0f) {
-                            val matrix = android.graphics.Matrix().apply { postRotate(rotationDegrees) }
-                            android.graphics.Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
-                        } else bitmap
+                        // 1. Tamaño MILIMÉTRICO exacto (Ancho x Alto x 1.5 para YUV420)
+                        val nv21 = ByteArray(width * height * 3 / 2)
 
-                        finalBitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, stream)
-                        viewModel.enqueueFrame(stream.toByteArray())
-                        stream.close()
+                        val yBuffer = proxy.planes[0].buffer
+                        val uBuffer = proxy.planes[1].buffer
+                        val vBuffer = proxy.planes[2].buffer
+
+                        val ySize = yBuffer.remaining()
+                        val uSize = uBuffer.remaining()
+                        val vSize = vBuffer.remaining()
+
+                        // 2. Extraemos Y (Brillo y formas)
+                        yBuffer.get(nv21, 0, ySize)
+
+                        // 3. Extraemos UV (Color) - ¡La cura para el Síndrome de los Pitufos!
+                        if (proxy.planes[1].pixelStride == 2) {
+                            // 🪄 LA MAGIA ESTÁ AQUÍ:
+                            // Le pedimos el buffer "U" primero para generar formato NV12 perfecto.
+                            if (ySize + uSize <= nv21.size) {
+                                uBuffer.get(nv21, ySize, uSize)
+                            }
+                        } else {
+                            // Si por casualidad es un celular viejo con canales separados
+                            if (ySize + uSize + vSize <= nv21.size) {
+                                uBuffer.get(nv21, ySize, uSize)
+                                vBuffer.get(nv21, ySize + uSize, vSize)
+                            }
+                        }
+
+                        // 4. Se lo pasamos al motor con sus medidas reales
+                        val timestampUs = proxy.imageInfo.timestamp / 1000
+                        viewModel.feedEncoder(nv21, timestampUs, width, height)
                     }
                     proxy.close()
                 }
 
+                // 3. Vinculamos la sesión
                 val camera = myProvider.bindToLifecycle(lifecycleOwner, cameraSelector, preview, analyzer, imageCapture)
                 cameraControl = camera.cameraControl
                 if (!isFrontCamera && isFlashOn) cameraControl?.enableTorch(true)
-            } catch (e: Exception) {}
+
+            } catch (e: Exception) {
+                android.util.Log.e("BroCam_Camera", "Error bindeando: ${e.message}")
+            }
         }
     }
+
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
 
@@ -349,6 +399,22 @@ fun CameraScreen(viewModel: BroCamViewModel) {
                     Text("CERRAR INDICACIÓN (X)", style = MaterialTheme.typography.titleLarge)
                 }
             }
+        }
+    }
+}
+
+private fun saveBitmapToGallery(context: android.content.Context, bitmap: android.graphics.Bitmap) {
+    val filename = "BroCam_${System.currentTimeMillis()}.jpg"
+    val contentValues = ContentValues().apply {
+        put(MediaStore.MediaColumns.DISPLAY_NAME, filename)
+        put(MediaStore.MediaColumns.MIME_TYPE, "image/jpeg")
+        put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/BroCam")
+    }
+
+    val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
+    uri?.let {
+        context.contentResolver.openOutputStream(it).use { stream ->
+            bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 100, stream!!)
         }
     }
 }
