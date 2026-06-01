@@ -9,6 +9,7 @@ import androidx.camera.core.*
 import androidx.camera.core.resolutionselector.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -18,20 +19,19 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -69,14 +69,8 @@ fun CameraScreen(viewModel: BroCamViewModel) {
     var cameraInfo: CameraInfo? by remember { mutableStateOf(null) }
     var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
 
-    LaunchedEffect(isFlashOn) {
-        if (!isFrontCamera) try { cameraControl?.enableTorch(isFlashOn) } catch (e: Exception) {}
-    }
-
-    LaunchedEffect(remoteZoom) {
-        try { cameraControl?.setZoomRatio(remoteZoom) } catch (e: Exception) {}
-    }
-
+    LaunchedEffect(isFlashOn) { if (!isFrontCamera) try { cameraControl?.enableTorch(isFlashOn) } catch (e: Exception) {} }
+    LaunchedEffect(remoteZoom) { try { cameraControl?.setZoomRatio(remoteZoom) } catch (e: Exception) {} }
     LaunchedEffect(remoteExposure) {
         try {
             cameraInfo?.exposureState?.let { state ->
@@ -97,21 +91,17 @@ fun CameraScreen(viewModel: BroCamViewModel) {
                 try { cameraControl?.enableTorch(false) } catch (e: Exception) {}
                 kotlinx.coroutines.delay(150)
             }
-        } else {
-            try { cameraControl?.enableTorch(isFlashOn) } catch (e: Exception) {}
-        }
+        } else { try { cameraControl?.enableTorch(isFlashOn) } catch (e: Exception) {} }
     }
 
     LaunchedEffect(remotePointer) {
         val currentPointer = remotePointer
-        val myPreviewView = previewViewRef
-        val myCameraControl = cameraControl
-        if (currentPointer != null && myPreviewView != null && myCameraControl != null) {
+        if (currentPointer != null && previewViewRef != null && cameraControl != null) {
             try {
-                val factory = myPreviewView.meteringPointFactory
-                val point = factory.createPoint(currentPointer.first * myPreviewView.width, currentPointer.second * myPreviewView.height)
+                val factory = previewViewRef!!.meteringPointFactory
+                val point = factory.createPoint(currentPointer.first * previewViewRef!!.width, currentPointer.second * previewViewRef!!.height)
                 val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF).setAutoCancelDuration(3, java.util.concurrent.TimeUnit.SECONDS).build()
-                myCameraControl.startFocusAndMetering(action)
+                cameraControl!!.startFocusAndMetering(action)
             } catch (e: Exception) {}
         }
     }
@@ -129,7 +119,7 @@ fun CameraScreen(viewModel: BroCamViewModel) {
                             saveBitmapToGallery(context, finalBitmap)
                             image.close()
                             viewModel.sendCommand("PHOTO_OK")
-                            Toast.makeText(context, "📸 Evidencia Guardada: $gpsInfo", Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, "📸 Evidencia Guardada", Toast.LENGTH_SHORT).show()
                         }
                         override fun onError(e: ImageCaptureException) {}
                     }
@@ -140,14 +130,12 @@ fun CameraScreen(viewModel: BroCamViewModel) {
 
     LaunchedEffect(isHighQuality, isFrontCamera, cameraProviderState.value, previewViewRef) {
         val myProvider = cameraProviderState.value
-        val myPreviewView = previewViewRef
-
-        if (myProvider != null && myPreviewView != null) {
+        if (myProvider != null && previewViewRef != null) {
             try {
                 myProvider.unbindAll()
-                val targetSize = if (isHighQuality) Size(1280, 720) else Size(640, 480)
+                val targetSize = if (isHighQuality) Size(1280, 960) else Size(640, 480)
                 val cameraSelector = if (isFrontCamera) CameraSelector.DEFAULT_FRONT_CAMERA else CameraSelector.DEFAULT_BACK_CAMERA
-                val preview = Preview.Builder().build().also { it.setSurfaceProvider(myPreviewView.surfaceProvider) }
+                val preview = Preview.Builder().build().also { it.setSurfaceProvider(previewViewRef!!.surfaceProvider) }
                 val analyzer = ImageAnalysis.Builder()
                     .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                     .setOutputImageFormat(ImageAnalysis.OUTPUT_IMAGE_FORMAT_YUV_420_888)
@@ -169,13 +157,9 @@ fun CameraScreen(viewModel: BroCamViewModel) {
                         if (proxy.planes[1].pixelStride == 2) {
                             if (ySize + uSize <= nv21.size) uBuffer.get(nv21, ySize, uSize)
                         } else {
-                            if (ySize + uSize + vSize <= nv21.size) {
-                                uBuffer.get(nv21, ySize, uSize)
-                                vBuffer.get(nv21, ySize + uSize, vSize)
-                            }
+                            if (ySize + uSize + vSize <= nv21.size) { uBuffer.get(nv21, ySize, uSize); vBuffer.get(nv21, ySize + uSize, vSize) }
                         }
-                        val timestampUs = proxy.imageInfo.timestamp / 1000
-                        viewModel.feedEncoder(nv21, timestampUs, width, height)
+                        viewModel.feedEncoder(nv21, proxy.imageInfo.timestamp / 1000, width, height)
                     }
                     proxy.close()
                 }
@@ -188,11 +172,14 @@ fun CameraScreen(viewModel: BroCamViewModel) {
         }
     }
 
+    val buttonBg = Color.Black.copy(alpha = 0.5f)
+
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
             factory = { ctx ->
                 val pv = PreviewView(ctx).apply {
                     layoutParams = android.widget.FrameLayout.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT)
+                    // Usamos FIT_CENTER para que no se recorte nada y se vea la vista completa del sensor
                     scaleType = PreviewView.ScaleType.FIT_CENTER
                     implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                 }
@@ -204,82 +191,75 @@ fun CameraScreen(viewModel: BroCamViewModel) {
         )
 
         if (!isBatterySaverMode) {
-            Button(
-                onClick = { viewModel.setRole(null) },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC3545).copy(alpha = 0.9f)),
-                shape = RoundedCornerShape(20.dp),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
-                modifier = Modifier.align(Alignment.TopStart).padding(top = 48.dp, start = 16.dp)
-            ) { Text("SALIR", color = Color.White, fontWeight = FontWeight.Bold) }
 
-            Column(Modifier.align(Alignment.TopEnd).padding(top = 48.dp, end = 16.dp), horizontalAlignment = Alignment.End) {
+            // Top Row: [ CONFIG ] ------ [ SD/HD ] ------ [ 🔴 EN VIVO ]
+            Row(modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter).padding(top = 40.dp, start = 16.dp, end = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                // Config (Modo Ahorro / Pantalla apagada)
+                Box(modifier = Modifier.background(buttonBg, RoundedCornerShape(12.dp)).clickable { isBatterySaverMode = true }.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    Text("🌙", color = Color.White, fontSize = 16.sp)
+                }
+
+                // Calidad
+                Box(modifier = Modifier.background(if (isHighQuality) Color(0xFF06B6D4) else buttonBg, RoundedCornerShape(12.dp)).clickable { viewModel.toggleQuality() }.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    Text(if (isHighQuality) "HD" else "SD", color = if (isHighQuality) Color.Black else Color.White, fontWeight = FontWeight.Bold)
+                }
+
                 if (isStreaming) {
-                    Text("🔴 LENTE EN VIVO", color = Color.Red, style = MaterialTheme.typography.titleMedium)
-                    Text(if (isHighQuality) "Calidad: HD" else "Calidad: SD", color = Color.White, style = MaterialTheme.typography.labelMedium)
+                    Box(modifier = Modifier.background(Color.Red.copy(alpha = 0.7f), RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 6.dp)) {
+                        Text("EN VIVO", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
                 } else {
-                    Text("ESPERANDO CONTROL...", color = Color.Yellow, style = MaterialTheme.typography.titleMedium)
+                    Box(modifier = Modifier.background(Color.DarkGray.copy(alpha = 0.7f), RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 6.dp)) {
+                        Text("OFFLINE", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
                 }
             }
 
-            // 🛠️ BARRA INFERIOR REDISEÑADA
-            Column(
-                modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter).padding(horizontal = 16.dp).padding(bottom = 32.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                // Fila Superior de la Botonera (Opciones)
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    // 🎯 Botón Flash (Ahora con TEXTO claro)
-                    Button(
-                        onClick = { viewModel.toggleFlash() },
-                        colors = ButtonDefaults.buttonColors(containerColor = if (isFlashOn) Color(0xFFFFC107) else Color(0xFF1E293B).copy(alpha = 0.8f))
-                    ) { Text(if (isFlashOn) "⚡ ON" else "⚡ OFF", color = if (isFlashOn) Color.Black else Color.White, fontWeight = FontWeight.Bold) }
+            // Bloque Inferior
+            Column(modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp, start = 16.dp, end = 16.dp)) {
 
-                    // Botón Cámara
-                    Button(
-                        onClick = { viewModel.toggleCamera() },
-                        colors = ButtonDefaults.buttonColors(containerColor = if (isFrontCamera) Color(0xFF06B6D4) else Color(0xFF1E293B).copy(alpha = 0.8f))
-                    ) { Text(if (isFrontCamera) "FRONT" else "BACK", color = Color.White) }
-
-                    // 🎯 NUEVO: Botón Galería
-                    Button(
-                        onClick = {
-                            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
-                                type = "image/*"
-                                flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK
-                            }
-                            try { context.startActivity(intent) } catch (e: Exception) { Toast.makeText(context, "Galería no encontrada", Toast.LENGTH_SHORT).show() }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B).copy(alpha = 0.8f))
-                    ) { Text("📁 Galería", color = Color.White) }
+                // Row A: [ ❌ SALIR ] ------ [ 📁 GALERÍA ]
+                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    IconButton(onClick = { viewModel.setRole(null) }, modifier = Modifier.background(buttonBg, CircleShape)) {
+                        Icon(Icons.Default.Close, contentDescription = "Salir", tint = Color.White)
+                    }
+                    Box(modifier = Modifier.size(48.dp).background(buttonBg, CircleShape).clickable {
+                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply { type = "image/*"; flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK }
+                        try { context.startActivity(intent) } catch (e: Exception) {}
+                    }, contentAlignment = Alignment.Center) {
+                        Text("📁", fontSize = 18.sp)
+                    }
                 }
 
-                // Fila Inferior de la Botonera (Acciones Principales)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceAround,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Button(
-                        onClick = { isBatterySaverMode = true },
-                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC3545).copy(alpha = 0.9f))
-                    ) { Text("Apagar", color = Color.White) }
+                // Row B: [ ⚡ Flash ] [ 🔄 Cambio ] [ ⚪ Captura ] [ 🚨 SOS ] [ 🎤 Hablar ]
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
 
-                    // 🎯 NUEVO: DISPARADOR LOCAL DEL LENTE
-                    Box(modifier = Modifier.size(76.dp).background(Color.White, CircleShape).border(4.dp, Color.Gray, CircleShape).clickable { viewModel.takeLocalPhoto() })
+                    // Flash
+                    Box(modifier = Modifier.size(56.dp).background(if (isFlashOn) Color.Yellow else buttonBg, CircleShape).clickable { viewModel.toggleFlash() }, contentAlignment = Alignment.Center) {
+                        Text("⚡", fontSize = 24.sp)
+                        if (!isFlashOn) { Canvas(modifier = Modifier.size(24.dp)) { drawLine(color = Color.Red, start = Offset(size.width, 0f), end = Offset(0f, size.height), strokeWidth = 4f) } }
+                    }
 
+                    // Cambio de cámara
+                    IconButton(onClick = { viewModel.toggleCamera() }, modifier = Modifier.background(buttonBg, CircleShape).size(56.dp)) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Voltear", tint = Color.White)
+                    }
+
+                    // Botón Central (Capturar Local)
+                    Box(modifier = Modifier.size(72.dp).background(Color.White, CircleShape).border(4.dp, Color.LightGray, CircleShape).clickable { viewModel.takeLocalPhoto() })
+
+                    // SOS (El Lente no necesita slider de exposición, usamos SOS)
+                    Box(modifier = Modifier.size(56.dp).background(if (isSosMode) Color.Red else buttonBg, CircleShape).clickable { viewModel.toggleSos() }, contentAlignment = Alignment.Center) {
+                        Text("🚨", fontSize = 24.sp)
+                    }
+
+                    // Micrófono
                     val interactionSource = remember { MutableInteractionSource() }
                     val isPressed by interactionSource.collectIsPressedAsState()
                     LaunchedEffect(isPressed) { if (isPressed) viewModel.startPushToTalk() else viewModel.stopPushToTalk() }
-
-                    Button(
-                        onClick = { },
-                        interactionSource = interactionSource,
-                        colors = ButtonDefaults.buttonColors(containerColor = if (isPressed) Color(0xFF22C55E) else Color(0xFF2563EB))
-                    ) { Text(if (isPressed) "HABLANDO" else "🎤 HABLAR", color = Color.White) }
+                    Box(modifier = Modifier.size(56.dp).background(if (isPressed) Color.Green else buttonBg, CircleShape).clickable(interactionSource = interactionSource, indication = null) {}, contentAlignment = Alignment.Center) {
+                        Text("🎤", fontSize = 24.sp)
+                    }
                 }
             }
         }
@@ -289,15 +269,11 @@ fun CameraScreen(viewModel: BroCamViewModel) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Canvas(modifier = Modifier.aspectRatio(cameraRatio)) {
                     if (remotePointer != null) {
-                        val pointX = remotePointer!!.first * size.width
-                        val pointY = remotePointer!!.second * size.height
-                        drawCircle(color = Color.Red, radius = 24f, center = androidx.compose.ui.geometry.Offset(pointX, pointY))
-                        drawCircle(color = Color.White, radius = 28f, center = androidx.compose.ui.geometry.Offset(pointX, pointY), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 6f))
+                        drawCircle(color = Color.Red, radius = 24f, center = Offset(remotePointer!!.first * size.width, remotePointer!!.second * size.height))
+                        drawCircle(color = Color.White, radius = 28f, center = Offset(remotePointer!!.first * size.width, remotePointer!!.second * size.height), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 6f))
                     }
                     if (remoteLiveLine.isNotEmpty()) {
-                        for (i in 0 until remoteLiveLine.size - 1) {
-                            drawLine(color = Color.Red, start = androidx.compose.ui.geometry.Offset(remoteLiveLine[i].first * size.width, remoteLiveLine[i].second * size.height), end = androidx.compose.ui.geometry.Offset(remoteLiveLine[i+1].first * size.width, remoteLiveLine[i+1].second * size.height), strokeWidth = 10f)
-                        }
+                        for (i in 0 until remoteLiveLine.size - 1) drawLine(color = Color.Red, start = Offset(remoteLiveLine[i].first * size.width, remoteLiveLine[i].second * size.height), end = Offset(remoteLiveLine[i+1].first * size.width, remoteLiveLine[i+1].second * size.height), strokeWidth = 10f)
                     }
                 }
             }
@@ -306,9 +282,9 @@ fun CameraScreen(viewModel: BroCamViewModel) {
         if (isBatterySaverMode) {
             Box(modifier = Modifier.fillMaxSize().background(Color.Black).clickable { isBatterySaverMode = false }, contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icons.Default.Info
-                    Text("PANTALLA APAGADA", color = Color.DarkGray, style = MaterialTheme.typography.titleLarge)
-                    Text("Toca para encender", color = Color.Gray)
+                    Text("🌙", fontSize = 48.sp)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Text("PANTALLA APAGADA", color = Color.Gray, style = MaterialTheme.typography.titleLarge)
                 }
             }
         }
@@ -317,8 +293,9 @@ fun CameraScreen(viewModel: BroCamViewModel) {
             Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.9f)), contentAlignment = Alignment.Center) {
                 val imageRatio = annotatedImage!!.width.toFloat() / annotatedImage!!.height.toFloat()
                 Image(bitmap = annotatedImage!!.asImageBitmap(), contentDescription = "Indicación", modifier = Modifier.fillMaxWidth().aspectRatio(imageRatio))
-                Button(onClick = { viewModel.clearAnnotatedImage() }, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 48.dp).height(60.dp), colors = ButtonDefaults.buttonColors(containerColor = Color.Red)) {
-                    Text("CERRAR (X)", style = MaterialTheme.typography.titleLarge)
+                Button(onClick = { viewModel.clearAnnotatedImage() }, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 60.dp), colors = ButtonDefaults.buttonColors(containerColor = Color.Red)) {
+                    Text("CERRAR IMAGEN RECIBIDA", fontWeight = FontWeight.Bold)
+                    Text("CERRAR IMAGEN RECIBIDA", fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -333,9 +310,5 @@ private fun saveBitmapToGallery(context: android.content.Context, bitmap: androi
         put(MediaStore.Images.Media.RELATIVE_PATH, "Pictures/BroCam")
     }
     val uri = context.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
-    uri?.let {
-        context.contentResolver.openOutputStream(it).use { stream ->
-            bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 100, stream!!)
-        }
-    }
+    uri?.let { context.contentResolver.openOutputStream(it).use { stream -> bitmap.compress(android.graphics.Bitmap.CompressFormat.JPEG, 100, stream!!) } }
 }

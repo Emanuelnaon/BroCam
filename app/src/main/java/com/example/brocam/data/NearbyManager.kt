@@ -17,7 +17,7 @@ class NearbyManager(private val context: Context) {
     private val client = Nearby.getConnectionsClient(context)
     private val SERVICE_ID = "com.example.brocam.V2_SERVICE"
 
-    private val STRATEGY = Strategy.P2P_STAR
+    private val STRATEGY = Strategy.P2P_CLUSTER
 
     private val _connectionStatus = MutableStateFlow("Desconectado")
     val connectionStatus = _connectionStatus.asStateFlow()

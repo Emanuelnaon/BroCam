@@ -61,7 +61,12 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+    // En tu archivo app/build.gradle.kts, dentro de dependencies { ... }
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3") // O la versión más reciente
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
+
     // Para el GPS
     implementation("com.google.android.gms:play-services-location:21.2.0")
+
 
 }

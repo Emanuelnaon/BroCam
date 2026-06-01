@@ -19,21 +19,12 @@ class VideoEncoderManager(
       try {
          mediaCodec = MediaCodec.createEncoderByType(MediaFormat.MIMETYPE_VIDEO_HEVC)
 
-         val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_HEVC, width, height).apply {
-            // Pedimos bytes puros (YUV420) en lugar de una superficie
-            setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
-            setInteger(MediaFormat.KEY_BIT_RATE, 6_000_000)
-            setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
-            setInteger(MediaFormat.KEY_FRAME_RATE, 30)
-            setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+         val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_HEVC, width, height)
+         format.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible)
+         format.setInteger(MediaFormat.KEY_BIT_RATE, 4_000_000)
 
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-               setInteger(MediaFormat.KEY_LOW_LATENCY, 1)
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-               setInteger(MediaFormat.KEY_MAX_B_FRAMES, 0)
-            }
-         }
+         format.setInteger(MediaFormat.KEY_FRAME_RATE, 30)
+         format.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
 
          mediaCodec?.setCallback(object : MediaCodec.Callback() {
             override fun onInputBufferAvailable(codec: MediaCodec, index: Int) {

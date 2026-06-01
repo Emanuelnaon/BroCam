@@ -33,7 +33,6 @@ import android.graphics.Typeface
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import com.example.brocam.core.camera.VideoEncoderManager
 
 class BroCamViewModel(application: Application) : AndroidViewModel(application) {
     private val nearbyManager = NearbyManager(application.applicationContext)
@@ -106,7 +105,7 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
                 if (endpointId != null && _isStreaming.value && !isSendingFrame) {
                     isSendingFrame = true
                     try { nearbyManager.sendData(endpointId, Payload.fromBytes(frameBytes)) }
-                    catch (e: Exception) { Log.e("BroCam", "Error de red: ${e.message}") }
+                    catch (e: Exception) {}
                     finally { isSendingFrame = false }
                 }
             }
@@ -153,10 +152,7 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
                                     val y = coords[1].toFloatOrNull()
                                     if (x != null && y != null) {
                                         _remotePointer.value = Pair(x, y)
-                                        viewModelScope.launch {
-                                            kotlinx.coroutines.delay(2000)
-                                            if (_remotePointer.value == Pair(x, y)) _remotePointer.value = null
-                                        }
+                                        viewModelScope.launch { kotlinx.coroutines.delay(2000); if (_remotePointer.value == Pair(x, y)) _remotePointer.value = null }
                                     }
                                 }
                             } else if (command.startsWith("LIVELINE:")) {
@@ -169,12 +165,7 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
                                 }
                                 if (newLine.isNotEmpty()) {
                                     _remoteLiveLine.value = newLine
-                                    viewModelScope.launch {
-                                        kotlinx.coroutines.delay(3000)
-                                        if (_remoteLiveLine.value == newLine) {
-                                            _remoteLiveLine.value = emptyList()
-                                        }
-                                    }
+                                    viewModelScope.launch { kotlinx.coroutines.delay(3000); if (_remoteLiveLine.value == newLine) _remoteLiveLine.value = emptyList() }
                                 }
                             } else if (command.startsWith("ZOOM:")) {
                                 val zoomValue = command.substringAfter("ZOOM:").toFloatOrNull()
@@ -185,29 +176,30 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
                             } else {
                                 when (command) {
                                     "START_STREAM" -> _isStreaming.value = true
-                                    "STOP_STREAM" -> {
-                                        _isStreaming.value = false
-                                        if (_currentRole.value == AppRole.LENTE) stopH265Encoder()
-                                    }
+                                    "STOP_STREAM" -> { _isStreaming.value = false; if (_currentRole.value == AppRole.LENTE) stopH265Encoder() }
                                     "TAKE_PHOTO" -> _shutterEvent.send(true)
                                     "PHOTO_OK" -> _connectionState.value = _connectionState.value.copy(message = "📸 Foto guardada en Lente")
-                                    "QUALITY_HD" -> _isHighQuality.value = true
-                                    "QUALITY_SD" -> _isHighQuality.value = false
+                                    "QUALITY_HD" -> {
+                                        _isHighQuality.value = true
+                                        purgeVideoMemory()
+                                    }
+                                    "QUALITY_SD" -> {
+                                        _isHighQuality.value = false
+                                        purgeVideoMemory()
+                                    }
                                     "FLASH_ON" -> _isFlashOn.value = true
                                     "FLASH_OFF" -> _isFlashOn.value = false
                                     "SOS_ON" -> _isSosMode.value = true
                                     "SOS_OFF" -> _isSosMode.value = false
-                                    "CAM_FRONT" -> { _isFrontCamera.value = true; _rotationDegrees.value = 270 }
-                                    "CAM_BACK" -> { _isFrontCamera.value = false; _rotationDegrees.value = 90 }
+                                    "CAM_FRONT" -> { _isFrontCamera.value = true; _rotationDegrees.value = 270; purgeVideoMemory() }
+                                    "CAM_BACK" -> { _isFrontCamera.value = false; _rotationDegrees.value = 90; purgeVideoMemory() }
                                     "CLEAR_ANNOTATION" -> _annotatedImage.value = null
                                 }
                             }
                         }
                     } else {
                         val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                        withContext(Dispatchers.Main) {
-                            if (_currentRole.value == AppRole.LENTE) _annotatedImage.value = bitmap
-                        }
+                        withContext(Dispatchers.Main) { if (_currentRole.value == AppRole.LENTE) _annotatedImage.value = bitmap }
                     }
                 }
             }
@@ -215,14 +207,25 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
         override fun onPayloadTransferUpdate(id: String, u: PayloadTransferUpdate) {}
     }
 
+    private fun purgeVideoMemory() {
+        viewModelScope.launch(Dispatchers.IO) {
+            // 1. Detenemos motores
+            if (_currentRole.value == AppRole.LENTE) stopH265Encoder()
+            if (_currentRole.value == AppRole.CONTROL) stopH265Decoder()
+
+            // 2. Limpiamos la tubería de fotogramas
+            while(frameChannel.tryReceive().isSuccess) {}
+
+            // 3. Pausa de seguridad para que el hardware suelte el buffer
+            kotlinx.coroutines.delay(300)
+        }
+    }
+
     fun toggleSos() {
         val nv = !_isSosMode.value
         _isSosMode.value = nv
         sendCommand(if (nv) "SOS_ON" else "SOS_OFF")
-        if (nv && _isFlashOn.value) {
-            _isFlashOn.value = false
-            sendCommand("FLASH_OFF")
-        }
+        if (nv && _isFlashOn.value) { _isFlashOn.value = false; sendCommand("FLASH_OFF") }
     }
 
     fun feedEncoder(rawBytes: ByteArray, timestampUs: Long, width: Int, height: Int) {
@@ -242,7 +245,12 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
 
     fun startH265Decoder(surface: android.view.Surface) {
         if (videoDecoder == null) videoDecoder = com.example.brocam.core.camera.VideoDecoderManager()
-        videoDecoder?.startDecoder(surface)
+
+        // 🪄 FIX DIMENSIONES: Le decimos al decodificador qué tamaño exacto esperar
+        val w = if (_isHighQuality.value) 1280 else 640
+        val h = if (_isHighQuality.value) 960 else 480
+
+        videoDecoder?.startDecoder(surface, w, h)
     }
 
     fun stopH265Decoder() {
@@ -294,17 +302,59 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
         })
     }
 
-    fun toggleQuality() { val nv = !_isHighQuality.value; _isHighQuality.value = nv; sendCommand(if (nv) "QUALITY_HD" else "QUALITY_SD") }
-    fun toggleFlash() { val nv = !_isFlashOn.value; _isFlashOn.value = nv; sendCommand(if (nv) "FLASH_ON" else "FLASH_OFF") }
-    fun toggleCamera() { val nv = !_isFrontCamera.value; _isFrontCamera.value = nv; sendCommand(if (nv) "CAM_FRONT" else "CAM_BACK") }
+    fun toggleQuality() {
+        val nv = !_isHighQuality.value
 
-    fun triggerRemotePhoto() { sendCommand("TAKE_PHOTO") }
+        viewModelScope.launch {
+            // 1. APAGAMOS EL GRIFO DE VIDEO PRIMERO
+            val wasStreaming = _isStreaming.value
+            if (wasStreaming) {
+                _isStreaming.value = false // Corta el envío de bytes local
+                sendCommand("STOP_STREAM") // Le dice al otro celular que deje de renderizar
+                purgeVideoMemory()
+                kotlinx.coroutines.delay(300) // Damos 300ms para que las tuberías de red se vacíen
+            }
 
-    // 🎯 NUEVO: Función para disparar la foto desde el celular Lente físicamente
-    fun takeLocalPhoto() {
-        viewModelScope.launch { _shutterEvent.send(true) }
+            // 2. CAMBIAMOS LA CALIDAD Y AVISAMOS
+            _isHighQuality.value = nv
+            sendCommand(if (nv) "QUALITY_HD" else "QUALITY_SD")
+
+            // 3. DAMOS TIEMPO A LA UI PARA RECONSTRUIR EL TEXTUREVIEW (El key() de Compose)
+            kotlinx.coroutines.delay(500)
+
+            // 4. VOLVEMOS A ABRIR EL GRIFO
+            if (wasStreaming) {
+                _isStreaming.value = true
+                sendCommand("START_STREAM")
+            }
+        }
     }
+    fun toggleFlash() { val nv = !_isFlashOn.value; _isFlashOn.value = nv; sendCommand(if (nv) "FLASH_ON" else "FLASH_OFF") }
+    fun toggleCamera() {
+        val nv = !_isFrontCamera.value
 
+        viewModelScope.launch {
+            val wasStreaming = _isStreaming.value
+            if (wasStreaming) {
+                _isStreaming.value = false
+                sendCommand("STOP_STREAM")
+                purgeVideoMemory()
+                kotlinx.coroutines.delay(300)
+            }
+
+            _isFrontCamera.value = nv
+            sendCommand(if (nv) "CAM_FRONT" else "CAM_BACK")
+
+            kotlinx.coroutines.delay(800)
+
+            if (wasStreaming) {
+                _isStreaming.value = true
+                sendCommand("START_STREAM")
+            }
+        }
+    }
+    fun triggerRemotePhoto() { sendCommand("TAKE_PHOTO") }
+    fun takeLocalPhoto() { viewModelScope.launch { _shutterEvent.send(true) } }
     fun setRemoteZoom(ratio: Float) { sendCommand("ZOOM:$ratio") }
     fun setRemoteExposure(value: Float) { sendCommand("EXP:$value") }
     fun sendPointer(x: Float, y: Float) { sendCommand("POINTER:$x,$y") }
@@ -313,15 +363,15 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
         val coords = line.joinToString(",") { "${it.first},${it.second}" }
         sendCommand("LIVELINE:$coords")
     }
+    fun sendCommand(cmd: String) { viewModelScope.launch(Dispatchers.IO) { val endpointId = _connectionState.value.connectedEndpointId; if (endpointId != null) nearbyManager.sendData(endpointId, Payload.fromBytes(cmd.toByteArray())) } }
 
-    fun sendCommand(cmd: String) {
-        viewModelScope.launch(Dispatchers.IO) {
-            val endpointId = _connectionState.value.connectedEndpointId
-            if (endpointId != null) nearbyManager.sendData(endpointId, Payload.fromBytes(cmd.toByteArray()))
-        }
+    fun disconnect() {
+        nearbyManager.stopAll()
+        purgeVideoMemory()
+        resetState()
+        _currentRole.value = null
     }
 
-    fun disconnect() { nearbyManager.stopAll(); resetState(); _currentRole.value = null }
     private fun resetState() { _connectionState.value = ConnectionState(isConnected = false, message = "Desconectado", connectedEndpointId = null); _isStreaming.value = false; _receivedFrame.value = null; _isFlashOn.value = false; _isHighQuality.value = false }
     override fun onCleared() { super.onCleared(); consumerJob?.cancel(); nearbyManager.stopAll() }
 
@@ -362,16 +412,9 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 val outBufferSize = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, audioFormat)
                 val safeBufferSize = if (outBufferSize > 0) outBufferSize else 4096
-                track = AudioTrack.Builder()
-                    .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
-                    .setAudioFormat(AudioFormat.Builder().setEncoding(audioFormat).setSampleRate(sampleRate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
-                    .setBufferSizeInBytes(safeBufferSize)
-                    .setTransferMode(AudioTrack.MODE_STREAM)
-                    .build()
+                track = AudioTrack.Builder().setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()).setAudioFormat(AudioFormat.Builder().setEncoding(audioFormat).setSampleRate(sampleRate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build()).setBufferSizeInBytes(safeBufferSize).setTransferMode(AudioTrack.MODE_STREAM).build()
                 track.play()
-                for (audioData in audioReceiveChannel) {
-                    track.write(audioData, 0, audioData.size)
-                }
+                for (audioData in audioReceiveChannel) track.write(audioData, 0, audioData.size)
             } catch (e: Exception) {} finally { track?.release() }
         }
     }
@@ -387,14 +430,8 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
             try {
                 audioRecord = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, sampleRate, channelConfig, audioFormat, audioBufferSize)
                 val audioSessionId = audioRecord.audioSessionId
-                if (AcousticEchoCanceler.isAvailable()) {
-                    echoCanceler = AcousticEchoCanceler.create(audioSessionId)
-                    echoCanceler?.enabled = true
-                }
-                if (NoiseSuppressor.isAvailable()) {
-                    noiseSuppressor = NoiseSuppressor.create(audioSessionId)
-                    noiseSuppressor?.enabled = true
-                }
+                if (AcousticEchoCanceler.isAvailable()) { echoCanceler = AcousticEchoCanceler.create(audioSessionId); echoCanceler?.enabled = true }
+                if (NoiseSuppressor.isAvailable()) { noiseSuppressor = NoiseSuppressor.create(audioSessionId); noiseSuppressor?.enabled = true }
                 audioRecord.startRecording()
                 val chunkBuffer = ByteArray(1024)
                 val header = "AUD:".toByteArray()
@@ -406,12 +443,7 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
                         if (endpointId != null) nearbyManager.sendData(endpointId, Payload.fromBytes(payloadBytes))
                     }
                 }
-            } catch (e: Exception) {} finally {
-                audioRecord?.stop()
-                audioRecord?.release()
-                echoCanceler?.release()
-                noiseSuppressor?.release()
-            }
+            } catch (e: Exception) {} finally { audioRecord?.stop(); audioRecord?.release(); echoCanceler?.release(); noiseSuppressor?.release() }
         }
     }
 
@@ -438,41 +470,23 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
 
     fun fetchCurrentLocation(onLocationResult: (String) -> Unit) {
         val fusedLocationClient = com.google.android.gms.location.LocationServices.getFusedLocationProviderClient(getApplication<Application>())
-        if (androidx.core.app.ActivityCompat.checkSelfPermission(getApplication(), android.Manifest.permission.ACCESS_FINE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-            onLocationResult("GPS: Sin permiso")
-            return
-        }
+        if (androidx.core.app.ActivityCompat.checkSelfPermission(getApplication(), android.Manifest.permission.ACCESS_FINE_LOCATION) != android.content.pm.PackageManager.PERMISSION_GRANTED) { onLocationResult("GPS: Sin permiso"); return }
         val token = com.google.android.gms.tasks.CancellationTokenSource().token
         fusedLocationClient.getCurrentLocation(com.google.android.gms.location.Priority.PRIORITY_HIGH_ACCURACY, token)
-            .addOnSuccessListener { loc: android.location.Location? ->
-                if (loc != null) {
-                    val latLong = "Lat: ${String.format(java.util.Locale.US, "%.6f", loc.latitude)} | Lon: ${String.format(java.util.Locale.US, "%.6f", loc.longitude)}"
-                    onLocationResult(latLong)
-                } else {
-                    onLocationResult("GPS: Localizando...")
-                }
-            }
-            .addOnFailureListener { exception: Exception ->
-                onLocationResult("GPS: Error de sensor")
-            }
+            .addOnSuccessListener { loc -> if (loc != null) onLocationResult("Lat: ${String.format(java.util.Locale.US, "%.6f", loc.latitude)} | Lon: ${String.format(java.util.Locale.US, "%.6f", loc.longitude)}") else onLocationResult("GPS: Localizando...") }
+            .addOnFailureListener { onLocationResult("GPS: Error de sensor") }
     }
 
     fun startH265Encoder() {
         if (videoEncoder != null) return
-        videoEncoder = VideoEncoderManager(
-            onVideoDataReady = { chunk ->
-                if (_isStreaming.value) {
-                    val prefix = "VID:".toByteArray()
-                    val payloadBytes = prefix + chunk
-                    enqueueFrame(payloadBytes)
-                }
-            }
-        )
-        videoEncoder?.startEncoder(1280, 720)
+        videoEncoder = com.example.brocam.core.camera.VideoEncoderManager(onVideoDataReady = { chunk -> if (_isStreaming.value) enqueueFrame("VID:".toByteArray() + chunk) })
+
+        // 🪄 FIX DIMENSIONES: Le decimos al codificador qué tamaño exacto enviar
+        val w = if (_isHighQuality.value) 1280 else 640
+        val h = if (_isHighQuality.value) 960 else 480
+
+        videoEncoder?.startEncoder(w, h)
     }
 
-    fun stopH265Encoder() {
-        videoEncoder?.stopEncoder()
-        videoEncoder = null
-    }
+    fun stopH265Encoder() { videoEncoder?.stopEncoder(); videoEncoder = null }
 }
