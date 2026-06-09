@@ -50,7 +50,6 @@ fun CameraScreen(viewModel: BroCamViewModel) {
     val isHighQuality by viewModel.isHighQuality.collectAsState()
     val isFlashOn by viewModel.isFlashOn.collectAsState()
     val isFrontCamera by viewModel.isFrontCamera.collectAsState()
-    val isSosMode by viewModel.isSosMode.collectAsState()
 
     val remotePointer by viewModel.remotePointer.collectAsState()
     val annotatedImage by viewModel.annotatedImage.collectAsState()
@@ -59,6 +58,7 @@ fun CameraScreen(viewModel: BroCamViewModel) {
     val remoteExposure by viewModel.remoteExposure.collectAsState()
 
     var isBatterySaverMode by remember { mutableStateOf(false) }
+    var isExposureMenuOpen by remember { mutableStateOf(false) }
 
     BackHandler { viewModel.setRole(null) }
 
@@ -81,17 +81,6 @@ fun CameraScreen(viewModel: BroCamViewModel) {
                 }
             }
         } catch (e: Exception) {}
-    }
-
-    LaunchedEffect(isSosMode, isFrontCamera) {
-        if (isSosMode && !isFrontCamera && cameraControl != null) {
-            while (isActive) {
-                try { cameraControl?.enableTorch(true) } catch (e: Exception) {}
-                kotlinx.coroutines.delay(150)
-                try { cameraControl?.enableTorch(false) } catch (e: Exception) {}
-                kotlinx.coroutines.delay(150)
-            }
-        } else { try { cameraControl?.enableTorch(isFlashOn) } catch (e: Exception) {} }
     }
 
     LaunchedEffect(remotePointer) {
@@ -172,14 +161,13 @@ fun CameraScreen(viewModel: BroCamViewModel) {
         }
     }
 
-    val buttonBg = Color.Black.copy(alpha = 0.5f)
+    val buttonBg = Color.Black.copy(alpha = 0.6f)
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         AndroidView(
             factory = { ctx ->
                 val pv = PreviewView(ctx).apply {
                     layoutParams = android.widget.FrameLayout.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT)
-                    // Usamos FIT_CENTER para que no se recorte nada y se vea la vista completa del sensor
                     scaleType = PreviewView.ScaleType.FIT_CENTER
                     implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                 }
@@ -191,22 +179,19 @@ fun CameraScreen(viewModel: BroCamViewModel) {
         )
 
         if (!isBatterySaverMode) {
-
-            // Top Row: [ CONFIG ] ------ [ SD/HD ] ------ [ 🔴 EN VIVO ]
+            // Top Row
             Row(modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter).padding(top = 40.dp, start = 16.dp, end = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                // Config (Modo Ahorro / Pantalla apagada)
                 Box(modifier = Modifier.background(buttonBg, RoundedCornerShape(12.dp)).clickable { isBatterySaverMode = true }.padding(horizontal = 16.dp, vertical = 8.dp)) {
                     Text("🌙", color = Color.White, fontSize = 16.sp)
                 }
 
-                // Calidad
                 Box(modifier = Modifier.background(if (isHighQuality) Color(0xFF06B6D4) else buttonBg, RoundedCornerShape(12.dp)).clickable { viewModel.toggleQuality() }.padding(horizontal = 16.dp, vertical = 8.dp)) {
                     Text(if (isHighQuality) "HD" else "SD", color = if (isHighQuality) Color.Black else Color.White, fontWeight = FontWeight.Bold)
                 }
 
                 if (isStreaming) {
                     Box(modifier = Modifier.background(Color.Red.copy(alpha = 0.7f), RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 6.dp)) {
-                        Text("EN VIVO", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text("🔴 EN VIVO", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
                 } else {
                     Box(modifier = Modifier.background(Color.DarkGray.copy(alpha = 0.7f), RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 6.dp)) {
@@ -218,9 +203,22 @@ fun CameraScreen(viewModel: BroCamViewModel) {
             // Bloque Inferior
             Column(modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp, start = 16.dp, end = 16.dp)) {
 
-                // Row A: [ ❌ SALIR ] ------ [ 📁 GALERÍA ]
-                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    IconButton(onClick = { viewModel.setRole(null) }, modifier = Modifier.background(buttonBg, CircleShape)) {
+                AnimatedVisibility(visible = isExposureMenuOpen) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp).background(buttonBg, RoundedCornerShape(16.dp)).padding(horizontal = 16.dp, vertical = 8.dp)) {
+                        Text("☀️", fontSize = 20.sp, modifier = Modifier.padding(end = 8.dp))
+
+                        // 🪄 FIX SINTAXIS: Usamos 'remoteExposure' directo, sin el .value
+                        Slider(
+                            value = remoteExposure,
+                            onValueChange = { viewModel.setRemoteExposure(it) },
+                            colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White),
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp, start = 8.dp, end = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    IconButton(onClick = { viewModel.setRole(null) }, modifier = Modifier.background(Color.Red.copy(alpha=0.8f), CircleShape)) {
                         Icon(Icons.Default.Close, contentDescription = "Salir", tint = Color.White)
                     }
                     Box(modifier = Modifier.size(48.dp).background(buttonBg, CircleShape).clickable {
@@ -231,41 +229,34 @@ fun CameraScreen(viewModel: BroCamViewModel) {
                     }
                 }
 
-                // Row B: [ ⚡ Flash ] [ 🔄 Cambio ] [ ⚪ Captura ] [ 🚨 SOS ] [ 🎤 Hablar ]
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-
-                    // Flash
-                    Box(modifier = Modifier.size(56.dp).background(if (isFlashOn) Color.Yellow else buttonBg, CircleShape).clickable { viewModel.toggleFlash() }, contentAlignment = Alignment.Center) {
-                        Text("⚡", fontSize = 24.sp)
-                        if (!isFlashOn) { Canvas(modifier = Modifier.size(24.dp)) { drawLine(color = Color.Red, start = Offset(size.width, 0f), end = Offset(0f, size.height), strokeWidth = 4f) } }
-                    }
-
-                    // Cambio de cámara
-                    IconButton(onClick = { viewModel.toggleCamera() }, modifier = Modifier.background(buttonBg, CircleShape).size(56.dp)) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Voltear", tint = Color.White)
-                    }
-
-                    // Botón Central (Capturar Local)
-                    Box(modifier = Modifier.size(72.dp).background(Color.White, CircleShape).border(4.dp, Color.LightGray, CircleShape).clickable { viewModel.takeLocalPhoto() })
-
-                    // SOS (El Lente no necesita slider de exposición, usamos SOS)
-                    Box(modifier = Modifier.size(56.dp).background(if (isSosMode) Color.Red else buttonBg, CircleShape).clickable { viewModel.toggleSos() }, contentAlignment = Alignment.Center) {
-                        Text("🚨", fontSize = 24.sp)
-                    }
-
-                    // Micrófono
                     val interactionSource = remember { MutableInteractionSource() }
                     val isPressed by interactionSource.collectIsPressedAsState()
                     LaunchedEffect(isPressed) { if (isPressed) viewModel.startPushToTalk() else viewModel.stopPushToTalk() }
                     Box(modifier = Modifier.size(56.dp).background(if (isPressed) Color.Green else buttonBg, CircleShape).clickable(interactionSource = interactionSource, indication = null) {}, contentAlignment = Alignment.Center) {
                         Text("🎤", fontSize = 24.sp)
                     }
+
+                    Box(modifier = Modifier.size(56.dp).background(if (isExposureMenuOpen) Color(0xFF06B6D4) else buttonBg, CircleShape).clickable { isExposureMenuOpen = !isExposureMenuOpen }, contentAlignment = Alignment.Center) {
+                        Text("☀️", fontSize = 24.sp)
+                    }
+
+                    Box(modifier = Modifier.size(76.dp).background(Color.White, CircleShape).border(4.dp, Color.LightGray, CircleShape).clickable { viewModel.takeLocalPhoto() })
+
+                    Box(modifier = Modifier.size(56.dp).background(buttonBg, CircleShape).clickable { viewModel.toggleFlash() }, contentAlignment = Alignment.Center) {
+                        Text("⚡", fontSize = 24.sp, color = if (isFlashOn) Color.Yellow else Color.White)
+                        if (!isFlashOn) { Canvas(modifier = Modifier.size(32.dp)) { drawLine(color = Color.White, start = Offset(0f, 0f), end = Offset(size.width, size.height), strokeWidth = 4f) } }
+                    }
+
+                    IconButton(onClick = { viewModel.toggleCamera() }, modifier = Modifier.background(buttonBg, CircleShape).size(56.dp)) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Voltear", tint = Color.White)
+                    }
                 }
             }
         }
 
         if (remotePointer != null || remoteLiveLine.isNotEmpty()) {
-            val cameraRatio = if (isHighQuality) 9f / 16f else 3f / 4f
+            val cameraRatio = 4f / 3f
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Canvas(modifier = Modifier.aspectRatio(cameraRatio)) {
                     if (remotePointer != null) {
@@ -295,13 +286,13 @@ fun CameraScreen(viewModel: BroCamViewModel) {
                 Image(bitmap = annotatedImage!!.asImageBitmap(), contentDescription = "Indicación", modifier = Modifier.fillMaxWidth().aspectRatio(imageRatio))
                 Button(onClick = { viewModel.clearAnnotatedImage() }, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 60.dp), colors = ButtonDefaults.buttonColors(containerColor = Color.Red)) {
                     Text("CERRAR IMAGEN RECIBIDA", fontWeight = FontWeight.Bold)
-                    Text("CERRAR IMAGEN RECIBIDA", fontWeight = FontWeight.Bold)
                 }
             }
         }
     }
 }
 
+// FUNCIÓN AISLADA FUERA DEL COMPOSABLE
 private fun saveBitmapToGallery(context: android.content.Context, bitmap: android.graphics.Bitmap) {
     val filename = "BroCam_${System.currentTimeMillis()}.jpg"
     val contentValues = ContentValues().apply {

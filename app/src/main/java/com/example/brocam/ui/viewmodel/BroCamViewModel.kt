@@ -178,7 +178,11 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
                                     "START_STREAM" -> _isStreaming.value = true
                                     "STOP_STREAM" -> { _isStreaming.value = false; if (_currentRole.value == AppRole.LENTE) stopH265Encoder() }
                                     "TAKE_PHOTO" -> _shutterEvent.send(true)
-                                    "PHOTO_OK" -> _connectionState.value = _connectionState.value.copy(message = "📸 Foto guardada en Lente")
+                                    // 🪄 FIX NOTIFICACIÓN: Disparamos un aviso a nivel de sistema operativo
+                                    "PHOTO_OK" -> {
+                                        _connectionState.value = _connectionState.value.copy(message = "📸 Foto guardada en Lente")
+                                        android.widget.Toast.makeText(getApplication(), "📸 Evidencia guardada en el Lente", android.widget.Toast.LENGTH_LONG).show()
+                                    }
                                     "QUALITY_HD" -> {
                                         _isHighQuality.value = true
                                         purgeVideoMemory()

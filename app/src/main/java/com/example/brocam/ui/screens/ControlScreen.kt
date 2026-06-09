@@ -32,6 +32,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.brocam.ui.viewmodel.BroCamViewModel
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 
 @Composable
 fun ControlScreen(viewModel: BroCamViewModel) {
@@ -46,10 +48,15 @@ fun ControlScreen(viewModel: BroCamViewModel) {
     var drawingLines by remember { mutableStateOf(listOf<List<Pair<Float, Float>>>()) }
     var currentLine by remember { mutableStateOf(listOf<Pair<Float, Float>>()) }
     var frozenFrame by remember { mutableStateOf<android.graphics.Bitmap?>(null) }
-    var isMenuOpen by remember { mutableStateOf(false) }
-    var textureViewRef by remember { mutableStateOf<android.view.TextureView?>(null) }
 
-    // Estado del blindaje
+    var isLivePencilMode by remember { mutableStateOf(false) }
+    var currentLiveLine by remember { mutableStateOf(listOf<Pair<Float, Float>>()) }
+
+    var isMenuOpen by remember { mutableStateOf(false) }
+    var isExposureMenuOpen by remember { mutableStateOf(false) }
+    var remoteExposureValue by remember { mutableFloatStateOf(0.5f) }
+
+    var textureViewRef by remember { mutableStateOf<android.view.TextureView?>(null) }
     var isDecoderStarted by remember { mutableStateOf(false) }
 
     BackHandler { viewModel.setRole(null) }
@@ -58,26 +65,49 @@ fun ControlScreen(viewModel: BroCamViewModel) {
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         if (!connectionState.isConnected) {
-            Text("CONEXIÓN PERDIDA", color = Color.Red, modifier = Modifier.align(Alignment.Center))
+            Column(modifier = Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
+                Icon(imageVector = Icons.Default.Close, contentDescription = "Desconectado", tint = Color.Red, modifier = Modifier.size(64.dp))
+                Spacer(modifier = Modifier.height(16.dp))
+                Text("CONEXIÓN PERDIDA", color = Color.Red, fontWeight = FontWeight.Black, fontSize = 24.sp)
+                Spacer(modifier = Modifier.height(24.dp))
+                Button(onClick = { viewModel.setRole(null) }, colors = ButtonDefaults.buttonColors(containerColor = Color.DarkGray)) { Text("Volver al Inicio") }
+            }
         } else if (isStreaming || frozenFrame != null) {
             val isLive = isStreaming && !isFrozen
 
-            // 1. VISOR DE VIDEO (Cero Zoom y Selfie Corregida)
+            // ==========================================
+            // 1. CAPA BASE: VISOR DE VIDEO (Mecánica Intacta)
+            // ==========================================
             Box(modifier = Modifier.fillMaxSize().clipToBounds(), contentAlignment = Alignment.Center) {
 
-                // 🪄 FIX MATEMÁTICO FINAL: Anula el zoom y arregla la rotación frontal
                 val videoModifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(4f / 3f)
                     .graphicsLayer {
-                        // 1. ROTACIÓN: 90 para trasera, 270 para frontal (quita el "de cabeza")
                         rotationZ = if (isFrontCamera) 270f else 90f
-
-                        // 2. ESCALA Y ESPEJO
                         val scaleRatio = 4f / 3f
                         scaleX = scaleRatio
-                        // Al girar la imagen, el negativo en Y crea el efecto espejo correcto
                         scaleY = if (isFrontCamera) -scaleRatio else scaleRatio
+                    }
+                    .pointerInput(isFrozen, isLivePencilMode) {
+                        if (!isFrozen && !isLivePencilMode) {
+                            detectTapGestures { tapOffset -> viewModel.sendPointer(tapOffset.x / size.width.toFloat(), tapOffset.y / size.height.toFloat()) }
+                        }
+                    }
+                    .pointerInput(isFrozen, isLivePencilMode) {
+                        if (isFrozen) {
+                            detectDragGestures(
+                                onDragStart = { offset -> currentLine = listOf(Pair((offset.x / size.width).coerceIn(0f, 1f), (offset.y / size.height).coerceIn(0f, 1f))) },
+                                onDragEnd = { drawingLines = drawingLines + listOf(currentLine); currentLine = emptyList() }
+                            ) { change, _ -> change.consume(); currentLine = currentLine + Pair((change.position.x / size.width).coerceIn(0f, 1f), (change.position.y / size.height).coerceIn(0f, 1f)) }
+                        } else if (isLivePencilMode) {
+                            detectDragGestures(
+                                onDragStart = { offset -> currentLiveLine = listOf(Pair((offset.x / size.width).coerceIn(0f, 1f), (offset.y / size.height).coerceIn(0f, 1f))) },
+                                onDragEnd = { currentLiveLine = emptyList() }
+                            ) { change, _ -> change.consume(); currentLiveLine = currentLiveLine + Pair((change.position.x / size.width).coerceIn(0f, 1f), (change.position.y / size.height).coerceIn(0f, 1f)); viewModel.sendLiveLine(currentLiveLine) }
+                        } else {
+                            detectDragGestures { change, _ -> change.consume(); viewModel.sendPointer((change.position.x / size.width).coerceIn(0f, 1f), (change.position.y / size.height).coerceIn(0f, 1f)) }
+                        }
                     }
 
                 if (isLive) {
@@ -109,7 +139,6 @@ fun ControlScreen(viewModel: BroCamViewModel) {
                         )
                     }
 
-                    // BLINDAJE DE RECONEXIÓN
                     LaunchedEffect(isStreaming) {
                         if (isStreaming && !isDecoderStarted && textureViewRef != null && textureViewRef!!.isAvailable) {
                             viewModel.startH265Decoder(android.view.Surface(textureViewRef!!.surfaceTexture))
@@ -120,33 +149,133 @@ fun ControlScreen(viewModel: BroCamViewModel) {
                 } else if (frozenFrame != null) {
                     Image(
                         bitmap = frozenFrame!!.asImageBitmap(),
-                        contentDescription = null,
+                        contentDescription = "Congelado",
                         modifier = videoModifier
                     )
                 }
+
+                // Trazos Pizarra
+                if (drawingLines.isNotEmpty() || currentLine.isNotEmpty()) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        for (line in drawingLines) for (i in 0 until line.size - 1) drawLine(color = Color.Red, start = Offset(line[i].first * size.width, line[i].second * size.height), end = Offset(line[i+1].first * size.width, line[i+1].second * size.height), strokeWidth = 8f)
+                        for (i in 0 until currentLine.size - 1) drawLine(color = Color.Red, start = Offset(currentLine[i].first * size.width, currentLine[i].second * size.height), end = Offset(currentLine[i+1].first * size.width, currentLine[i+1].second * size.height), strokeWidth = 8f)
+                    }
+                }
+                if (currentLiveLine.isNotEmpty()) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        for (i in 0 until currentLiveLine.size - 1) drawLine(color = Color.Red, start = Offset(currentLiveLine[i].first * size.width, currentLiveLine[i].second * size.height), end = Offset(currentLiveLine[i+1].first * size.width, currentLiveLine[i+1].second * size.height), strokeWidth = 10f)
+                    }
+                }
             }
 
-            // 2. UI FLOTANTE (Menús y Botones)
-            Row(modifier = Modifier.fillMaxWidth().padding(top = 40.dp, start = 16.dp, end = 16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                Button(onClick = { viewModel.toggleQuality() }, colors = ButtonDefaults.buttonColors(containerColor = if (isHighQuality) Color.Cyan else buttonBg)) {
-                    Text(if (isHighQuality) "HD" else "SD", color = if (isHighQuality) Color.Black else Color.White)
+            // ==========================================
+            // 2. CAPA UI FLOTANTE (Estructura Limpia)
+            // ==========================================
+
+            // Botón central "Enviar Imagen" (Solo visible si está congelado)
+            if (isFrozen) {
+                Button(
+                    onClick = { viewModel.sendAnnotatedFrame(frozenFrame!!, drawingLines) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                    modifier = Modifier.align(Alignment.Center).padding(bottom = 60.dp)
+                ) { Text("ENVIAR IMAGEN", fontWeight = FontWeight.Bold, fontSize = 18.sp) }
+            }
+
+            // --- SECCIÓN SUPERIOR ---
+            Box(modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter).padding(top = 40.dp, start = 16.dp, end = 16.dp)) {
+
+                // Izquierda: Calidad
+                Box(modifier = Modifier.align(Alignment.CenterStart).background(if (isHighQuality) Color(0xFF06B6D4) else buttonBg, RoundedCornerShape(12.dp)).clickable { viewModel.toggleQuality() }.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                    Text(if (isHighQuality) "HD" else "SD", color = if (isHighQuality) Color.Black else Color.White, fontWeight = FontWeight.Bold)
                 }
-                IconButton(onClick = { isMenuOpen = !isMenuOpen }, modifier = Modifier.background(buttonBg, CircleShape)) {
-                    Icon(Icons.Default.Settings, contentDescription = null, tint = Color.White)
+
+                // Centro: Piloto En Vivo
+                if (isLive) {
+                    Box(modifier = Modifier.align(Alignment.Center).background(Color.Red.copy(alpha = 0.7f), RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 6.dp)) {
+                        Text("🔴 EN VIVO", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                }
+
+                // Derecha: Ajustes
+                IconButton(onClick = { isMenuOpen = !isMenuOpen }, modifier = Modifier.align(Alignment.CenterEnd).background(if(isMenuOpen) Color.White else buttonBg, CircleShape)) {
+                    Icon(Icons.Default.Settings, contentDescription = "Ajustes", tint = if(isMenuOpen) Color.Black else Color.White)
+                }
+
+                // Sub-menú desplegable debajo de Ajustes
+                AnimatedVisibility(visible = isMenuOpen, modifier = Modifier.align(Alignment.TopEnd).padding(top = 56.dp)) {
+                    Column(modifier = Modifier.background(buttonBg, RoundedCornerShape(24.dp)).padding(8.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                        Box(modifier = Modifier.size(48.dp).background(if (isLivePencilMode) Color.Red else Color.Transparent, CircleShape).clickable { if (!isFrozen) isLivePencilMode = !isLivePencilMode }, contentAlignment = Alignment.Center) {
+                            Text("✏️", fontSize = 20.sp)
+                        }
+                        Box(modifier = Modifier.size(48.dp).background(if (isFrozen) Color.Red else Color.Transparent, CircleShape).clickable {
+                            if (!isFrozen) {
+                                val rawBitmap = textureViewRef?.bitmap
+                                if (rawBitmap != null) { frozenFrame = rawBitmap; isFrozen = true; isLivePencilMode = false }
+                            } else { isFrozen = false; frozenFrame = null; drawingLines = emptyList(); viewModel.clearAnnotatedImage() }
+                        }, contentAlignment = Alignment.Center) {
+                            Text(if(isFrozen) "❌" else "❄️", fontSize = 20.sp)
+                        }
+                    }
                 }
             }
 
-            // Barra inferior principal
-            Row(modifier = Modifier.fillMaxWidth().align(Alignment.BottomCenter).padding(bottom = 32.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                IconButton(onClick = { viewModel.setRole(null) }, modifier = Modifier.background(Color.Red, CircleShape)) {
-                    Icon(Icons.Default.Close, contentDescription = null, tint = Color.White)
+            // --- SECCIÓN INFERIOR ---
+            Column(modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 32.dp, start = 16.dp, end = 16.dp)) {
+
+                // Slider de Exposición (Flotante)
+                AnimatedVisibility(visible = isExposureMenuOpen) {
+                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp).background(buttonBg, RoundedCornerShape(16.dp)).padding(horizontal = 16.dp, vertical = 8.dp)) {
+                        Text("☀️", fontSize = 20.sp, modifier = Modifier.padding(end = 8.dp))
+                        Slider(value = remoteExposureValue, onValueChange = { remoteExposureValue = it; viewModel.setRemoteExposure(it) }, colors = SliderDefaults.colors(thumbColor = Color.White, activeTrackColor = Color.White), modifier = Modifier.weight(1f))
+                    }
                 }
-                Box(modifier = Modifier.size(72.dp).background(Color.White, CircleShape).clickable { viewModel.triggerRemotePhoto() })
-                IconButton(onClick = { viewModel.toggleCamera() }, modifier = Modifier.background(buttonBg, CircleShape)) {
-                    Icon(Icons.Default.Refresh, contentDescription = null, tint = Color.White)
+
+                // Nivel 1 (Sub-Bottom): Salir y Galería
+                Row(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp, start = 8.dp, end = 8.dp), horizontalArrangement = Arrangement.SpaceBetween) {
+                    IconButton(onClick = { viewModel.setRole(null) }, modifier = Modifier.background(Color.Red.copy(alpha=0.8f), CircleShape)) {
+                        Icon(Icons.Default.Close, contentDescription = "Salir", tint = Color.White)
+                    }
+                    Box(modifier = Modifier.size(48.dp).background(buttonBg, CircleShape).clickable {
+                        val intent = android.content.Intent(android.content.Intent.ACTION_VIEW).apply { type = "image/*"; flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK }
+                        try { context.startActivity(intent) } catch (e: Exception) {}
+                    }, contentAlignment = Alignment.Center) {
+                        Text("📁", fontSize = 18.sp)
+                    }
+                }
+
+                // Nivel 2 (Main Bottom): Mic, Exp, Obturador, Flash, Cambio de Cámara
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+
+                    // Micrófono
+                    val interactionSource = remember { MutableInteractionSource() }
+                    val isPressed by interactionSource.collectIsPressedAsState()
+                    LaunchedEffect(isPressed) { if (isPressed) viewModel.startPushToTalk() else viewModel.stopPushToTalk() }
+                    Box(modifier = Modifier.size(56.dp).background(if (isPressed) Color.Green else buttonBg, CircleShape).clickable(interactionSource = interactionSource, indication = null) {}, contentAlignment = Alignment.Center) {
+                        Text("🎤", fontSize = 24.sp)
+                    }
+
+                    // Exposición
+                    Box(modifier = Modifier.size(56.dp).background(if (isExposureMenuOpen) Color(0xFF06B6D4) else buttonBg, CircleShape).clickable { isExposureMenuOpen = !isExposureMenuOpen }, contentAlignment = Alignment.Center) {
+                        Text("☀️", fontSize = 24.sp)
+                    }
+
+                    // Obturador Principal (Captura)
+                    Box(modifier = Modifier.size(76.dp).background(Color.White, CircleShape).border(4.dp, Color.LightGray, CircleShape).clickable { viewModel.triggerRemotePhoto() })
+
+                    // Flash
+                    Box(modifier = Modifier.size(56.dp).background(buttonBg, CircleShape).clickable { viewModel.toggleFlash() }, contentAlignment = Alignment.Center) {
+                        Text("⚡", fontSize = 24.sp, color = if (isFlashOn) Color.Yellow else Color.White)
+                        if (!isFlashOn) {
+                            Canvas(modifier = Modifier.size(32.dp)) { drawLine(color = Color.White, start = Offset(0f, 0f), end = Offset(size.width, size.height), strokeWidth = 4f) }
+                        }
+                    }
+
+                    // Cambio de Cámara
+                    IconButton(onClick = { viewModel.toggleCamera() }, modifier = Modifier.background(buttonBg, CircleShape).size(56.dp)) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Voltear", tint = Color.White)
+                    }
                 }
             }
-        } else {
-            CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
         }
-    }}
+    }
+}
