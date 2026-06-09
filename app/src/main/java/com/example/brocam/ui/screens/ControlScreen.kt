@@ -65,21 +65,18 @@ fun ControlScreen(viewModel: BroCamViewModel) {
             // 1. VISOR DE VIDEO (Cero Zoom y Selfie Corregida)
             Box(modifier = Modifier.fillMaxSize().clipToBounds(), contentAlignment = Alignment.Center) {
 
-                // 🪄 FIX MATEMÁTICO: Este modificador anula el zoom y arregla la rotación
+                // 🪄 FIX MATEMÁTICO FINAL: Anula el zoom y arregla la rotación frontal
                 val videoModifier = Modifier
                     .fillMaxWidth()
-                    .aspectRatio(4f / 3f) // 1. Declaramos el formato real del sensor
+                    .aspectRatio(4f / 3f)
                     .graphicsLayer {
-                        // 2. ROTACIÓN: 90f para ambas arregla la selfie "de cabeza"
+                        // 1. ROTACIÓN: 90 para trasera, 270 para frontal (quita el "de cabeza")
                         rotationZ = if (isFrontCamera) 270f else 90f
 
-                        // 3. ESCALA EXACTA: Al rotar 90°, necesitamos escalar a 1.333 (4/3)
-                        // para que llene la pantalla sin hacer crop/zoom.
+                        // 2. ESCALA Y ESPEJO
                         val scaleRatio = 4f / 3f
-
                         scaleX = scaleRatio
-                        // 4. ESPEJO SELFIE: Al estar rotado 90°, el eje Y original es ahora
-                        // el horizontal. Lo invertimos en negativo para crear el efecto espejo.
+                        // Al girar la imagen, el negativo en Y crea el efecto espejo correcto
                         scaleY = if (isFrontCamera) -scaleRatio else scaleRatio
                     }
 

@@ -345,6 +345,8 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
             _isFrontCamera.value = nv
             sendCommand(if (nv) "CAM_FRONT" else "CAM_BACK")
 
+            // 🪄 FIX FILTRO VERDE: Le damos 800ms al hardware del Lente para que
+            // la cámara enfoque y regule la luz antes de enviar el primer frame.
             kotlinx.coroutines.delay(800)
 
             if (wasStreaming) {
