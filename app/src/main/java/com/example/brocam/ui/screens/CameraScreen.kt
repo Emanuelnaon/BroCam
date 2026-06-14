@@ -56,6 +56,8 @@ fun CameraScreen(viewModel: BroCamViewModel) {
     val remoteLiveLine by viewModel.remoteLiveLine.collectAsState()
     val remoteZoom by viewModel.remoteZoom.collectAsState()
     val remoteExposure by viewModel.remoteExposure.collectAsState()
+    val timerDuration by viewModel.timerDuration.collectAsState()
+    val currentCountdown by viewModel.currentCountdown.collectAsState()
 
     var isBatterySaverMode by remember { mutableStateOf(false) }
     var isExposureMenuOpen by remember { mutableStateOf(false) }
@@ -164,39 +166,105 @@ fun CameraScreen(viewModel: BroCamViewModel) {
     val buttonBg = Color.Black.copy(alpha = 0.6f)
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
+
+        // ==========================================
+        // 1. EL VISOR (ESTRUCTURA CORREGIDA)
+        // ==========================================
+
+        // A) Capa de Fondo: Cámara en PANTALLA COMPLETA
         AndroidView(
             factory = { ctx ->
                 val pv = PreviewView(ctx).apply {
-                    layoutParams = android.widget.FrameLayout.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT)
+                    layoutParams = android.widget.FrameLayout.LayoutParams(
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                        android.view.ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                    // Usamos FIT_CENTER para que CameraX gestione el escalado internamente
                     scaleType = PreviewView.ScaleType.FIT_CENTER
                     implementationMode = PreviewView.ImplementationMode.COMPATIBLE
                 }
                 previewViewRef = pv
-                ProcessCameraProvider.getInstance(ctx).addListener({ cameraProviderState.value = ProcessCameraProvider.getInstance(ctx).get() }, ContextCompat.getMainExecutor(ctx))
+                ProcessCameraProvider.getInstance(ctx).addListener({
+                    cameraProviderState.value = ProcessCameraProvider.getInstance(ctx).get()
+                }, ContextCompat.getMainExecutor(ctx))
                 pv
             },
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize() // 🪄 FIX: Llenar toda la pantalla (quita marco negro)
         )
 
+        // B) Capa de Dibujo (Invisible): Centrada y en 4:3 para alinear Overlays
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+
+            // Esta caja invisible coincide exactamente con lo que ve el Control
+            Box(modifier = Modifier.fillMaxWidth().aspectRatio(4f / 3f)) {
+
+                // 🪄 FIX NUMERO CENTRAL: Ahora se dibuja en el centro absoluto de la zona 4:3
+                if (currentCountdown > 0) {
+                    Text(
+                        text = currentCountdown.toString(),
+                        color = Color.White,
+                        fontSize = 160.sp,
+                        fontWeight = FontWeight.Black,
+                        style = androidx.compose.ui.text.TextStyle(
+                            shadow = androidx.compose.ui.graphics.Shadow(color = Color.Black, blurRadius = 24f)
+                        ),
+                        modifier = Modifier.align(Alignment.Center)
+                    )
+                }
+
+                // Mover Pizarra y Puntero aquí (Cerca de la línea 270)
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    // Puntero Remoto
+                    if (remotePointer != null) {
+                        drawCircle(color = Color.Red, radius = 24f, center = Offset(remotePointer!!.first * size.width, remotePointer!!.second * size.height))
+                        drawCircle(color = Color.White, radius = 28f, center = Offset(remotePointer!!.first * size.width, remotePointer!!.second * size.height), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 6f))
+                    }
+                    // Pizarra de líneas
+                    if (remoteLiveLine.isNotEmpty()) {
+                        for (i in 0 until remoteLiveLine.size - 1) drawLine(color = Color.Red, start = Offset(remoteLiveLine[i].first * size.width, remoteLiveLine[i].second * size.height), end = Offset(remoteLiveLine[i+1].first * size.width, remoteLiveLine[i+1].second * size.height), strokeWidth = 10f)
+                    }
+                }
+            }
+        }
+
+        // ==========================================
+        // 2. LA INTERFAZ FLOTANTE
+        // ==========================================
         if (!isBatterySaverMode) {
-            // Top Row
-            Row(modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter).padding(top = 40.dp, start = 16.dp, end = 16.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            // --- SECCIÓN SUPERIOR DEL LENTE ---
+            Row(
+                modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter).padding(top = 40.dp, start = 16.dp, end = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Izquierda: Luna (Ahorro de batería)
                 Box(modifier = Modifier.background(buttonBg, RoundedCornerShape(12.dp)).clickable { isBatterySaverMode = true }.padding(horizontal = 16.dp, vertical = 8.dp)) {
                     Text("🌙", color = Color.White, fontSize = 16.sp)
                 }
 
-                Box(modifier = Modifier.background(if (isHighQuality) Color(0xFF06B6D4) else buttonBg, RoundedCornerShape(12.dp)).clickable { viewModel.toggleQuality() }.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    Text(if (isHighQuality) "HD" else "SD", color = if (isHighQuality) Color.Black else Color.White, fontWeight = FontWeight.Bold)
+                Spacer(modifier = Modifier.weight(1f)) // Empuja al centro
+
+                // Centro: Grupo de Calidad y Temporizador
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.background(if (isHighQuality) Color(0xFF06B6D4) else buttonBg, RoundedCornerShape(12.dp)).clickable { viewModel.toggleQuality() }.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                        Text(if (isHighQuality) "HD" else "SD", color = if (isHighQuality) Color.Black else Color.White, fontWeight = FontWeight.Bold)
+                    }
+
+                    Spacer(modifier = Modifier.width(16.dp))
+
+                    Box(modifier = Modifier.background(if (timerDuration > 0) Color(0xFFF59E0B) else buttonBg, RoundedCornerShape(12.dp)).clickable { viewModel.cycleTimer() }.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                        Text(if (timerDuration > 0) "⏱️ ${timerDuration}s" else "⏱️ OFF", color = if (timerDuration > 0) Color.Black else Color.White, fontWeight = FontWeight.Bold)
+                    }
                 }
 
+                Spacer(modifier = Modifier.weight(1f)) // Empuja a la derecha
+
+                // Derecha: Piloto En Vivo
                 if (isStreaming) {
                     Box(modifier = Modifier.background(Color.Red.copy(alpha = 0.7f), RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 6.dp)) {
                         Text("🔴 EN VIVO", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
                 } else {
-                    Box(modifier = Modifier.background(Color.DarkGray.copy(alpha = 0.7f), RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 6.dp)) {
-                        Text("OFFLINE", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    }
+                    Spacer(modifier = Modifier.width(60.dp)) // Mantiene la estructura si está offline
                 }
             }
 
@@ -206,8 +274,6 @@ fun CameraScreen(viewModel: BroCamViewModel) {
                 AnimatedVisibility(visible = isExposureMenuOpen) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp).background(buttonBg, RoundedCornerShape(16.dp)).padding(horizontal = 16.dp, vertical = 8.dp)) {
                         Text("☀️", fontSize = 20.sp, modifier = Modifier.padding(end = 8.dp))
-
-                        // 🪄 FIX SINTAXIS: Usamos 'remoteExposure' directo, sin el .value
                         Slider(
                             value = remoteExposure,
                             onValueChange = { viewModel.setRemoteExposure(it) },
@@ -255,21 +321,7 @@ fun CameraScreen(viewModel: BroCamViewModel) {
             }
         }
 
-        if (remotePointer != null || remoteLiveLine.isNotEmpty()) {
-            val cameraRatio = 4f / 3f
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Canvas(modifier = Modifier.aspectRatio(cameraRatio)) {
-                    if (remotePointer != null) {
-                        drawCircle(color = Color.Red, radius = 24f, center = Offset(remotePointer!!.first * size.width, remotePointer!!.second * size.height))
-                        drawCircle(color = Color.White, radius = 28f, center = Offset(remotePointer!!.first * size.width, remotePointer!!.second * size.height), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 6f))
-                    }
-                    if (remoteLiveLine.isNotEmpty()) {
-                        for (i in 0 until remoteLiveLine.size - 1) drawLine(color = Color.Red, start = Offset(remoteLiveLine[i].first * size.width, remoteLiveLine[i].second * size.height), end = Offset(remoteLiveLine[i+1].first * size.width, remoteLiveLine[i+1].second * size.height), strokeWidth = 10f)
-                    }
-                }
-            }
-        }
-
+        // Modo Ahorro de Energía
         if (isBatterySaverMode) {
             Box(modifier = Modifier.fillMaxSize().background(Color.Black).clickable { isBatterySaverMode = false }, contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -280,6 +332,7 @@ fun CameraScreen(viewModel: BroCamViewModel) {
             }
         }
 
+        // Recepción de Imagen Congelada/Anotada
         if (annotatedImage != null) {
             Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.9f)), contentAlignment = Alignment.Center) {
                 val imageRatio = annotatedImage!!.width.toFloat() / annotatedImage!!.height.toFloat()
@@ -292,7 +345,6 @@ fun CameraScreen(viewModel: BroCamViewModel) {
     }
 }
 
-// FUNCIÓN AISLADA FUERA DEL COMPOSABLE
 private fun saveBitmapToGallery(context: android.content.Context, bitmap: android.graphics.Bitmap) {
     val filename = "BroCam_${System.currentTimeMillis()}.jpg"
     val contentValues = ContentValues().apply {

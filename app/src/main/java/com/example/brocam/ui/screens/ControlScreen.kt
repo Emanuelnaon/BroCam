@@ -43,6 +43,8 @@ fun ControlScreen(viewModel: BroCamViewModel) {
     val isFlashOn by viewModel.isFlashOn.collectAsState()
     val isFrontCamera by viewModel.isFrontCamera.collectAsState()
     val connectionState by viewModel.connectionState.collectAsState()
+    val timerDuration by viewModel.timerDuration.collectAsState()
+    val currentCountdown by viewModel.currentCountdown.collectAsState()
 
     var isFrozen by remember { mutableStateOf(false) }
     var drawingLines by remember { mutableStateOf(listOf<List<Pair<Float, Float>>>()) }
@@ -153,6 +155,19 @@ fun ControlScreen(viewModel: BroCamViewModel) {
                         modifier = videoModifier
                     )
                 }
+                // 🪄 FIX TIMER: Cuenta regresiva gigante en el centro del visor
+                if (currentCountdown > 0) {
+                    Text(
+                        text = currentCountdown.toString(),
+                        color = Color.White,
+                        fontSize = 160.sp,
+                        fontWeight = FontWeight.Black,
+                        style = androidx.compose.ui.text.TextStyle(
+                            shadow = androidx.compose.ui.graphics.Shadow(color = Color.Black, blurRadius = 24f)
+                        ),
+                        modifier = Modifier.align(Alignment.Center)
+                    )
+                }
 
                 // Trazos Pizarra
                 if (drawingLines.isNotEmpty() || currentLine.isNotEmpty()) {
@@ -182,38 +197,56 @@ fun ControlScreen(viewModel: BroCamViewModel) {
             }
 
             // --- SECCIÓN SUPERIOR ---
-            Box(modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter).padding(top = 40.dp, start = 16.dp, end = 16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter).padding(top = 40.dp, start = 16.dp, end = 16.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Izquierda: Calidad y Temporizador agrupados
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.background(if (isHighQuality) Color(0xFF06B6D4) else buttonBg, RoundedCornerShape(12.dp)).clickable { viewModel.toggleQuality() }.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                        Text(if (isHighQuality) "HD" else "SD", color = if (isHighQuality) Color.Black else Color.White, fontWeight = FontWeight.Bold)
+                    }
 
-                // Izquierda: Calidad
-                Box(modifier = Modifier.align(Alignment.CenterStart).background(if (isHighQuality) Color(0xFF06B6D4) else buttonBg, RoundedCornerShape(12.dp)).clickable { viewModel.toggleQuality() }.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                    Text(if (isHighQuality) "HD" else "SD", color = if (isHighQuality) Color.Black else Color.White, fontWeight = FontWeight.Bold)
-                }
+                    Spacer(modifier = Modifier.width(16.dp)) // Espaciador que evita la superposición
 
-                // Centro: Piloto En Vivo
-                if (isLive) {
-                    Box(modifier = Modifier.align(Alignment.Center).background(Color.Red.copy(alpha = 0.7f), RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 6.dp)) {
-                        Text("🔴 EN VIVO", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    Box(modifier = Modifier.background(if (timerDuration > 0) Color(0xFFF59E0B) else buttonBg, RoundedCornerShape(12.dp)).clickable { viewModel.cycleTimer() }.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                        Text(if (timerDuration > 0) "⏱️ ${timerDuration}s" else "⏱️ OFF", color = if (timerDuration > 0) Color.Black else Color.White, fontWeight = FontWeight.Bold)
                     }
                 }
 
-                // Derecha: Ajustes
-                IconButton(onClick = { isMenuOpen = !isMenuOpen }, modifier = Modifier.align(Alignment.CenterEnd).background(if(isMenuOpen) Color.White else buttonBg, CircleShape)) {
-                    Icon(Icons.Default.Settings, contentDescription = "Ajustes", tint = if(isMenuOpen) Color.Black else Color.White)
+                Spacer(modifier = Modifier.weight(1f)) // Empuja el centro
+
+                // Centro: Piloto En Vivo
+                if (isLive) {
+                    Box(modifier = Modifier.background(Color.Red.copy(alpha = 0.7f), RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 6.dp)) {
+                        Text("🔴 EN VIVO", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                    }
+                } else {
+                    Spacer(modifier = Modifier.width(60.dp)) // Estabiliza el layout offline
                 }
 
-                // Sub-menú desplegable debajo de Ajustes
-                AnimatedVisibility(visible = isMenuOpen, modifier = Modifier.align(Alignment.TopEnd).padding(top = 56.dp)) {
-                    Column(modifier = Modifier.background(buttonBg, RoundedCornerShape(24.dp)).padding(8.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-                        Box(modifier = Modifier.size(48.dp).background(if (isLivePencilMode) Color.Red else Color.Transparent, CircleShape).clickable { if (!isFrozen) isLivePencilMode = !isLivePencilMode }, contentAlignment = Alignment.Center) {
-                            Text("✏️", fontSize = 20.sp)
-                        }
-                        Box(modifier = Modifier.size(48.dp).background(if (isFrozen) Color.Red else Color.Transparent, CircleShape).clickable {
-                            if (!isFrozen) {
-                                val rawBitmap = textureViewRef?.bitmap
-                                if (rawBitmap != null) { frozenFrame = rawBitmap; isFrozen = true; isLivePencilMode = false }
-                            } else { isFrozen = false; frozenFrame = null; drawingLines = emptyList(); viewModel.clearAnnotatedImage() }
-                        }, contentAlignment = Alignment.Center) {
-                            Text(if(isFrozen) "❌" else "❄️", fontSize = 20.sp)
+                Spacer(modifier = Modifier.weight(1f)) // Empuja a la derecha
+
+                // Derecha: Ajustes y Menú Desplegable
+                Column(horizontalAlignment = Alignment.End) {
+                    IconButton(onClick = { isMenuOpen = !isMenuOpen }, modifier = Modifier.background(if(isMenuOpen) Color.White else buttonBg, CircleShape)) {
+                        Icon(Icons.Default.Settings, contentDescription = "Ajustes", tint = if(isMenuOpen) Color.Black else Color.White)
+                    }
+
+                    // Sub-menú desplegable debajo de Ajustes
+                    AnimatedVisibility(visible = isMenuOpen, modifier = Modifier.padding(top = 56.dp)) {
+                        Column(modifier = Modifier.background(buttonBg, RoundedCornerShape(24.dp)).padding(8.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                            Box(modifier = Modifier.size(48.dp).background(if (isLivePencilMode) Color.Red else Color.Transparent, CircleShape).clickable { if (!isFrozen) isLivePencilMode = !isLivePencilMode }, contentAlignment = Alignment.Center) {
+                                Text("✏️", fontSize = 20.sp)
+                            }
+                            Box(modifier = Modifier.size(48.dp).background(if (isFrozen) Color.Red else Color.Transparent, CircleShape).clickable {
+                                if (!isFrozen) {
+                                    val rawBitmap = textureViewRef?.bitmap
+                                    if (rawBitmap != null) { frozenFrame = rawBitmap; isFrozen = true; isLivePencilMode = false }
+                                } else { isFrozen = false; frozenFrame = null; drawingLines = emptyList(); viewModel.clearAnnotatedImage() }
+                            }, contentAlignment = Alignment.Center) {
+                                Text(if(isFrozen) "❌" else "❄️", fontSize = 20.sp)
+                            }
                         }
                     }
                 }

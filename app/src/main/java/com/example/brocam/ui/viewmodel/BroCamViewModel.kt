@@ -83,6 +83,33 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
 
     data class ConnectionState(val isConnected: Boolean = false, val message: String = "Desconectado", val connectedEndpointId: String? = null)
     private val _connectionState = MutableStateFlow(ConnectionState())
+    // Estados del Temporizador
+    private val _timerDuration = MutableStateFlow(0)
+    val timerDuration = _timerDuration.asStateFlow()
+    private val _currentCountdown = MutableStateFlow(0)
+    val currentCountdown = _currentCountdown.asStateFlow()
+    private var countdownJob: Job? = null
+
+    fun cycleTimer() {
+        val next = when (_timerDuration.value) { 0 -> 3; 3 -> 10; else -> 0 }
+        _timerDuration.value = next
+        sendCommand("SET_TIMER:$next")
+    }
+
+    private fun startCountdown(seconds: Int) {
+        countdownJob?.cancel()
+        countdownJob = viewModelScope.launch(Dispatchers.Main) {
+            for (i in seconds downTo 1) {
+                _currentCountdown.value = i
+                kotlinx.coroutines.delay(1000)
+            }
+            _currentCountdown.value = 0
+            // Solo el Lente ejecuta el disparo físico al terminar la cuenta
+            if (_currentRole.value == AppRole.LENTE) {
+                _shutterEvent.send(true)
+            }
+        }
+    }
     val connectionState = _connectionState.asStateFlow()
 
     private val deviceNamesMap = mutableMapOf<String, String>()
@@ -173,6 +200,11 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
                             } else if (command.startsWith("EXP:")) {
                                 val expValue = command.substringAfter("EXP:").toFloatOrNull()
                                 if (expValue != null) _remoteExposure.value = expValue
+                            } else if (command.startsWith("SET_TIMER:")) {
+                                _timerDuration.value = command.substringAfter("SET_TIMER:").toIntOrNull() ?: 0
+                            } else if (command.startsWith("START_TIMER:")) {
+                                val duration = command.substringAfter("START_TIMER:").toIntOrNull() ?: 3
+                                startCountdown(duration)
                             } else {
                                 when (command) {
                                     "START_STREAM" -> _isStreaming.value = true
@@ -359,8 +391,25 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
             }
         }
     }
-    fun triggerRemotePhoto() { sendCommand("TAKE_PHOTO") }
-    fun takeLocalPhoto() { viewModelScope.launch { _shutterEvent.send(true) } }
+    fun triggerRemotePhoto() {
+        val duration = _timerDuration.value
+        if (duration > 0) {
+            sendCommand("START_TIMER:$duration")
+            startCountdown(duration)
+        } else {
+            sendCommand("TAKE_PHOTO")
+        }
+    }
+
+    fun takeLocalPhoto() {
+        val duration = _timerDuration.value
+        if (duration > 0) {
+            sendCommand("START_TIMER:$duration") // Avisa al Control que inició la cuenta
+            startCountdown(duration)
+        } else {
+            viewModelScope.launch { _shutterEvent.send(true) }
+        }
+    }
     fun setRemoteZoom(ratio: Float) { sendCommand("ZOOM:$ratio") }
     fun setRemoteExposure(value: Float) { sendCommand("EXP:$value") }
     fun sendPointer(x: Float, y: Float) { sendCommand("POINTER:$x,$y") }
