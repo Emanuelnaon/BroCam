@@ -60,6 +60,7 @@ fun ControlScreen(viewModel: BroCamViewModel) {
 
     var textureViewRef by remember { mutableStateOf<android.view.TextureView?>(null) }
     var isDecoderStarted by remember { mutableStateOf(false) }
+    var isGridVisible by remember { mutableStateOf(false) }
 
     BackHandler { viewModel.setRole(null) }
 

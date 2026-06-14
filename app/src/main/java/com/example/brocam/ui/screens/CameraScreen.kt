@@ -61,6 +61,7 @@ fun CameraScreen(viewModel: BroCamViewModel) {
 
     var isBatterySaverMode by remember { mutableStateOf(false) }
     var isExposureMenuOpen by remember { mutableStateOf(false) }
+    var isGridVisible by remember { mutableStateOf(false) }
 
     BackHandler { viewModel.setRole(null) }
 
@@ -197,7 +198,21 @@ fun CameraScreen(viewModel: BroCamViewModel) {
 
             // Esta caja invisible coincide exactamente con lo que ve el Control
             Box(modifier = Modifier.fillMaxWidth().aspectRatio(4f / 3f)) {
+    // NUEVO: Capa de Cuadrícula 3x3
+                if (isGridVisible) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val stroke = 2f
+                        val gridColor = Color.White.copy(alpha = 0.4f)
 
+                        // Verticales (Regla de los Tercios)
+                        drawLine(color = gridColor, start = Offset(size.width / 3, 0f), end = Offset(size.width / 3, size.height), strokeWidth = stroke)
+                        drawLine(color = gridColor, start = Offset(size.width * 2 / 3, 0f), end = Offset(size.width * 2 / 3, size.height), strokeWidth = stroke)
+
+                        // Horizontales (Regla de los Tercios)
+                        drawLine(color = gridColor, start = Offset(0f, size.height / 3), end = Offset(size.width, size.height / 3), strokeWidth = stroke)
+                        drawLine(color = gridColor, start = Offset(0f, size.height * 2 / 3), end = Offset(size.width, size.height * 2 / 3), strokeWidth = stroke)
+                    }
+                }
                 // 🪄 FIX NUMERO CENTRAL: Ahora se dibuja en el centro absoluto de la zona 4:3
                 if (currentCountdown > 0) {
                     Text(
@@ -253,6 +268,12 @@ fun CameraScreen(viewModel: BroCamViewModel) {
 
                     Box(modifier = Modifier.background(if (timerDuration > 0) Color(0xFFF59E0B) else buttonBg, RoundedCornerShape(12.dp)).clickable { viewModel.cycleTimer() }.padding(horizontal = 16.dp, vertical = 8.dp)) {
                         Text(if (timerDuration > 0) "⏱️ ${timerDuration}s" else "⏱️ OFF", color = if (timerDuration > 0) Color.Black else Color.White, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(modifier = Modifier.width(16.dp)) // Separación
+
+                    // NUEVO: Botón Cuadrícula 3x3
+                    Box(modifier = Modifier.background(if (isGridVisible) Color.White else buttonBg, RoundedCornerShape(12.dp)).clickable { isGridVisible = !isGridVisible }.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                        Text("⌗", color = if (isGridVisible) Color.Black else Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     }
                 }
 
