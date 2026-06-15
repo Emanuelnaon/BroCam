@@ -34,7 +34,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.example.brocam.ui.viewmodel.BroCamViewModel
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
-
+import androidx.compose.foundation.gestures.detectTransformGestures
 @Composable
 fun ControlScreen(viewModel: BroCamViewModel) {
     val context = LocalContext.current
@@ -61,6 +61,7 @@ fun ControlScreen(viewModel: BroCamViewModel) {
     var textureViewRef by remember { mutableStateOf<android.view.TextureView?>(null) }
     var isDecoderStarted by remember { mutableStateOf(false) }
     var isGridVisible by remember { mutableStateOf(false) }
+    var currentZoom by remember { mutableFloatStateOf(1f) } // 1f es el 100% del lente nativo
 
     BackHandler { viewModel.setRole(null) }
 
@@ -83,10 +84,8 @@ fun ControlScreen(viewModel: BroCamViewModel) {
             // ==========================================
             Box(modifier = Modifier.fillMaxSize().clipToBounds(), contentAlignment = Alignment.Center) {
 
-                val videoModifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(4f / 3f)
-                    .graphicsLayer {
+                val videoModifier = Modifier.fillMaxWidth().aspectRatio(4f / 3f).
+                graphicsLayer {
                         rotationZ = if (isFrontCamera) 270f else 90f
                         val scaleRatio = 4f / 3f
                         scaleX = scaleRatio
@@ -110,6 +109,16 @@ fun ControlScreen(viewModel: BroCamViewModel) {
                             ) { change, _ -> change.consume(); currentLiveLine = currentLiveLine + Pair((change.position.x / size.width).coerceIn(0f, 1f), (change.position.y / size.height).coerceIn(0f, 1f)); viewModel.sendLiveLine(currentLiveLine) }
                         } else {
                             detectDragGestures { change, _ -> change.consume(); viewModel.sendPointer((change.position.x / size.width).coerceIn(0f, 1f), (change.position.y / size.height).coerceIn(0f, 1f)) }
+                        }
+                    }
+                    // NUEVO: GESTOS DE ZOOM (Pinch-to-Zoom)
+                    .pointerInput(isFrozen, isLivePencilMode) {
+                        // Solo permitimos hacer zoom si no estamos dibujando
+                        if (!isFrozen && !isLivePencilMode) {
+                            detectTransformGestures { _, _, zoomDelta, _ ->
+                                currentZoom = (currentZoom * zoomDelta).coerceIn(1f, 10f)
+                                viewModel.setRemoteZoom(currentZoom)
+                            }
                         }
                     }
 
@@ -156,30 +165,51 @@ fun ControlScreen(viewModel: BroCamViewModel) {
                         modifier = videoModifier
                     )
                 }
-                // 🪄 FIX TIMER: Cuenta regresiva gigante en el centro del visor
-                if (currentCountdown > 0) {
-                    Text(
-                        text = currentCountdown.toString(),
-                        color = Color.White,
-                        fontSize = 160.sp,
-                        fontWeight = FontWeight.Black,
-                        style = androidx.compose.ui.text.TextStyle(
-                            shadow = androidx.compose.ui.graphics.Shadow(color = Color.Black, blurRadius = 24f)
-                        ),
-                        modifier = Modifier.align(Alignment.Center)
-                    )
-                }
 
-                // Trazos Pizarra
-                if (drawingLines.isNotEmpty() || currentLine.isNotEmpty()) {
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        for (line in drawingLines) for (i in 0 until line.size - 1) drawLine(color = Color.Red, start = Offset(line[i].first * size.width, line[i].second * size.height), end = Offset(line[i+1].first * size.width, line[i+1].second * size.height), strokeWidth = 8f)
-                        for (i in 0 until currentLine.size - 1) drawLine(color = Color.Red, start = Offset(currentLine[i].first * size.width, currentLine[i].second * size.height), end = Offset(currentLine[i+1].first * size.width, currentLine[i+1].second * size.height), strokeWidth = 8f)
+                // ==========================================
+                // CAPA DE DIBUJO Y OVERLAYS (Forzada a 4:3)
+                // ==========================================
+                Box(modifier = Modifier.fillMaxWidth().aspectRatio(4f / 3f)) {
+
+                    // 1. Temporizador Gigante
+                    if (currentCountdown > 0) {
+                        Text(
+                            text = currentCountdown.toString(),
+                            color = Color.White,
+                            fontSize = 160.sp,
+                            fontWeight = FontWeight.Black,
+                            style = androidx.compose.ui.text.TextStyle(
+                                shadow = androidx.compose.ui.graphics.Shadow(color = Color.Black, blurRadius = 24f)
+                            ),
+                            modifier = Modifier.align(Alignment.Center)
+                        )
                     }
-                }
-                if (currentLiveLine.isNotEmpty()) {
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        for (i in 0 until currentLiveLine.size - 1) drawLine(color = Color.Red, start = Offset(currentLiveLine[i].first * size.width, currentLiveLine[i].second * size.height), end = Offset(currentLiveLine[i+1].first * size.width, currentLiveLine[i+1].second * size.height), strokeWidth = 10f)
+
+                    // 2. Cuadrícula 3x3
+                    if (isGridVisible) {
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            val stroke = 2f
+                            val gridColor = Color.White.copy(alpha = 0.4f)
+                            // Verticales
+                            drawLine(color = gridColor, start = Offset(size.width / 3, 0f), end = Offset(size.width / 3, size.height), strokeWidth = stroke)
+                            drawLine(color = gridColor, start = Offset(size.width * 2 / 3, 0f), end = Offset(size.width * 2 / 3, size.height), strokeWidth = stroke)
+                            // Horizontales
+                            drawLine(color = gridColor, start = Offset(0f, size.height / 3), end = Offset(size.width, size.height / 3), strokeWidth = stroke)
+                            drawLine(color = gridColor, start = Offset(0f, size.height * 2 / 3), end = Offset(size.width, size.height * 2 / 3), strokeWidth = stroke)
+                        }
+                    }
+
+                    // 3. Trazos Pizarra (Tus if de drawingLines y currentLiveLine van aquí adentro)
+                    if (drawingLines.isNotEmpty() || currentLine.isNotEmpty()) {
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            for (line in drawingLines) for (i in 0 until line.size - 1) drawLine(color = Color.Red, start = Offset(line[i].first * size.width, line[i].second * size.height), end = Offset(line[i+1].first * size.width, line[i+1].second * size.height), strokeWidth = 8f)
+                            for (i in 0 until currentLine.size - 1) drawLine(color = Color.Red, start = Offset(currentLine[i].first * size.width, currentLine[i].second * size.height), end = Offset(currentLine[i+1].first * size.width, currentLine[i+1].second * size.height), strokeWidth = 8f)
+                        }
+                    }
+                    if (currentLiveLine.isNotEmpty()) {
+                        Canvas(modifier = Modifier.fillMaxSize()) {
+                            for (i in 0 until currentLiveLine.size - 1) drawLine(color = Color.Red, start = Offset(currentLiveLine[i].first * size.width, currentLiveLine[i].second * size.height), end = Offset(currentLiveLine[i+1].first * size.width, currentLiveLine[i+1].second * size.height), strokeWidth = 10f)
+                        }
                     }
                 }
             }
@@ -212,6 +242,13 @@ fun ControlScreen(viewModel: BroCamViewModel) {
 
                     Box(modifier = Modifier.background(if (timerDuration > 0) Color(0xFFF59E0B) else buttonBg, RoundedCornerShape(12.dp)).clickable { viewModel.cycleTimer() }.padding(horizontal = 16.dp, vertical = 8.dp)) {
                         Text(if (timerDuration > 0) "⏱️ ${timerDuration}s" else "⏱️ OFF", color = if (timerDuration > 0) Color.Black else Color.White, fontWeight = FontWeight.Bold)
+                    }
+
+                    Spacer(modifier = Modifier.width(16.dp)) // Separación
+
+                    // NUEVO: Botón Cuadrícula 3x3
+                    Box(modifier = Modifier.background(if (isGridVisible) Color.White else buttonBg, RoundedCornerShape(12.dp)).clickable { isGridVisible = !isGridVisible }.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                        Text("⌗", color = if (isGridVisible) Color.Black else Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
                     }
                 }
 

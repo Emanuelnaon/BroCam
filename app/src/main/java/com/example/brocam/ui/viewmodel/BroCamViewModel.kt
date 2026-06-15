@@ -205,6 +205,10 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
                             } else if (command.startsWith("START_TIMER:")) {
                                 val duration = command.substringAfter("START_TIMER:").toIntOrNull() ?: 3
                                 startCountdown(duration)
+                            } else if (command.startsWith("ZOOM:")) {
+                                _remoteZoom.value =
+                                    command.substringAfter("ZOOM:").toFloatOrNull() ?: 1f
+
                             } else {
                                 when (command) {
                                     "START_STREAM" -> _isStreaming.value = true
@@ -410,8 +414,13 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
             viewModelScope.launch { _shutterEvent.send(true) }
         }
     }
-    fun setRemoteZoom(ratio: Float) { sendCommand("ZOOM:$ratio") }
+
     fun setRemoteExposure(value: Float) { sendCommand("EXP:$value") }
+
+    fun setRemoteZoom(zoomRatio: Float) {
+        _remoteZoom.value = zoomRatio
+        sendCommand("ZOOM:$zoomRatio")
+    }
     fun sendPointer(x: Float, y: Float) { sendCommand("POINTER:$x,$y") }
     fun sendLiveLine(line: List<Pair<Float, Float>>) {
         if (line.isEmpty()) return

@@ -39,8 +39,9 @@ import com.example.brocam.ui.viewmodel.BroCamViewModel
 import java.util.concurrent.Executors
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
+import androidx.compose.ui.input.pointer.pointerInput
 import kotlinx.coroutines.isActive
-
+import androidx.compose.foundation.gestures.detectTransformGestures
 @Composable
 fun CameraScreen(viewModel: BroCamViewModel) {
     val context = LocalContext.current
@@ -71,6 +72,7 @@ fun CameraScreen(viewModel: BroCamViewModel) {
     var cameraControl: CameraControl? by remember { mutableStateOf(null) }
     var cameraInfo: CameraInfo? by remember { mutableStateOf(null) }
     var previewViewRef by remember { mutableStateOf<PreviewView?>(null) }
+    var currentZoom by remember { mutableFloatStateOf(1f) }
 
     LaunchedEffect(isFlashOn) { if (!isFrontCamera) try { cameraControl?.enableTorch(isFlashOn) } catch (e: Exception) {} }
     LaunchedEffect(remoteZoom) { try { cameraControl?.setZoomRatio(remoteZoom) } catch (e: Exception) {} }
@@ -190,7 +192,14 @@ fun CameraScreen(viewModel: BroCamViewModel) {
                 }, ContextCompat.getMainExecutor(ctx))
                 pv
             },
-            modifier = Modifier.fillMaxSize() // 🪄 FIX: Llenar toda la pantalla (quita marco negro)
+            modifier = Modifier.fillMaxSize()
+                // NUEVO: GESTOS DE ZOOM LOCAL
+                .pointerInput(Unit) {
+                    detectTransformGestures { _, _, zoomDelta, _ ->
+                        currentZoom = (currentZoom * zoomDelta).coerceIn(1f, 10f)
+                        viewModel.setRemoteZoom(currentZoom)
+                    }
+                }
         )
 
         // B) Capa de Dibujo (Invisible): Centrada y en 4:3 para alinear Overlays
