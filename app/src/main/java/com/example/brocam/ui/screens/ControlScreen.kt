@@ -44,6 +44,33 @@ fun ControlScreen(viewModel: BroCamViewModel) {
     val isFrontCamera by viewModel.isFrontCamera.collectAsState()
     val connectionState by viewModel.connectionState.collectAsState()
     val timerDuration by viewModel.timerDuration.collectAsState()
+    // --- MOTOR DE FEEDBACK (Sonido y Vibración) ---
+    val mediaActionSound = remember { android.media.MediaActionSound() }
+    LaunchedEffect(Unit) {
+        mediaActionSound.load(android.media.MediaActionSound.SHUTTER_CLICK)
+        viewModel.hapticFeedbackEvent.collect {
+            try {
+                // 1. Sonido de Obturador Nativo
+                mediaActionSound.play(android.media.MediaActionSound.SHUTTER_CLICK)
+
+                // 2. Vibración moderna sin warnings (Clean Code para API 31+)
+                val vibrator = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                    val vibratorManager = context.getSystemService(android.content.Context.VIBRATOR_MANAGER_SERVICE) as android.os.VibratorManager
+                    vibratorManager.defaultVibrator
+                } else {
+                    @Suppress("DEPRECATION")
+                    context.getSystemService(android.content.Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+                }
+
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                    vibrator?.vibrate(android.os.VibrationEffect.createOneShot(150, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator?.vibrate(150)
+                }
+            } catch (e: Exception) {}
+        }
+    }
     val currentCountdown by viewModel.currentCountdown.collectAsState()
 
     var isFrozen by remember { mutableStateOf(false) }

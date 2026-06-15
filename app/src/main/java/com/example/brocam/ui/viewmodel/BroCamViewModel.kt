@@ -30,6 +30,7 @@ import kotlinx.coroutines.withContext
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Typeface
+import kotlinx.coroutines.flow.asSharedFlow
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -104,9 +105,11 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
                 kotlinx.coroutines.delay(1000)
             }
             _currentCountdown.value = 0
-            // Solo el Lente ejecuta el disparo físico al terminar la cuenta
+
+            // Se ejecuta solo cuando el contador llega a 0
             if (_currentRole.value == AppRole.LENTE) {
                 _shutterEvent.send(true)
+                _hapticFeedbackEvent.emit(Unit)
             }
         }
     }
@@ -118,6 +121,8 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
         loadHistory()
         startFrameConsumer()
     }
+    private val _hapticFeedbackEvent = kotlinx.coroutines.flow.MutableSharedFlow<Unit>()
+    val hapticFeedbackEvent = _hapticFeedbackEvent.asSharedFlow()
 
     private fun loadHistory() { _recentDevices.value = historyManager.getRecentDevices() }
 
@@ -208,7 +213,9 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
                             } else if (command.startsWith("ZOOM:")) {
                                 _remoteZoom.value =
                                     command.substringAfter("ZOOM:").toFloatOrNull() ?: 1f
-
+                            } else if (command == "PHOTO_OK") {
+                                // El Lente avisa que guardó la foto. Hacemos vibrar el Control.
+                                viewModelScope.launch { _hapticFeedbackEvent.emit(Unit) }
                             } else {
                                 when (command) {
                                     "START_STREAM" -> _isStreaming.value = true
@@ -408,10 +415,14 @@ class BroCamViewModel(application: Application) : AndroidViewModel(application) 
     fun takeLocalPhoto() {
         val duration = _timerDuration.value
         if (duration > 0) {
-            sendCommand("START_TIMER:$duration") // Avisa al Control que inició la cuenta
+            sendCommand("START_TIMER:$duration") // Avisa al Control
             startCountdown(duration)
         } else {
-            viewModelScope.launch { _shutterEvent.send(true) }
+            // Sin temporizador, el Lente dispara al instante
+            viewModelScope.launch {
+                _shutterEvent.send(true)
+                _hapticFeedbackEvent.emit(Unit)
+            }
         }
     }
 
