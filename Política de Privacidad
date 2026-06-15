@@ -1,0 +1,29 @@
+Política de Privacidad de BroCam
+Última actualización: [15 de Junio de 2026]
+
+BroCam ("la Aplicación") es operada y mantenida por [Norberto Emanuel Naon] ("nosotros", "nuestro"). Esta Política de Privacidad explica cómo se recopila, utiliza y protege la información cuando utilizas nuestra aplicación de captura audiovisual remota y transmisión P2P.
+
+1. Arquitectura de Transmisión (Peer-to-Peer)
+BroCam opera mediante una arquitectura de red descentralizada P2P utilizando la API Nearby Connections de Google. No utilizamos servidores centralizados, no almacenamos tus videos ni grabaciones de audio en la nube, y no transmitimos tu información a bases de datos de terceros. Toda la transmisión de datos ocurre de manera cifrada (en tránsito) exclusivamente entre los dos dispositivos sincronizados localmente ("Lente" y "Control").
+
+2. Información y Permisos Requeridos
+Para el correcto funcionamiento del ecosistema forense, BroCam requiere acceso temporal y estrictamente funcional a los siguientes componentes de hardware:
+
+Cámara y Micrófono (CAMERA, RECORD_AUDIO): Se utilizan exclusivamente para la captura de evidencia visual, la transmisión de video en tiempo real (H.265) y la comunicación bidireccional (Push-to-Talk) entre los dispositivos vinculados.
+
+Ubicación (ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION): La geolocalización es una función crítica del modo forense. Se utiliza estrictamente para incrustar coordenadas GPS como metadatos (etiquetas EXIF/datos de texto) en las fotografías capturadas, garantizando la trazabilidad espacial de la evidencia. No rastreamos tu ubicación en segundo plano ni compartimos este historial.
+
+Dispositivos Cercanos / Bluetooth / Wi-Fi Direct (BLUETOOTH_SCAN, BLUETOOTH_ADVERTISE, BLUETOOTH_CONNECT, NEARBY_WIFI_DEVICES): Requeridos por el sistema operativo Android para descubrir, autenticar y mantener el túnel de conexión cifrada de alta velocidad entre el Lente y el Control sin depender de redes de internet externas.
+
+3. Almacenamiento de Datos (Local)
+Cualquier evidencia fotográfica, fotograma congelado o imagen anotada generada durante el uso de BroCam se almacena directamente en el almacenamiento interno de tu dispositivo (Galería local). Tienes control absoluto sobre estos archivos y puedes eliminarlos a través del gestor de archivos nativo de tu sistema operativo.
+
+4. Compartición de Información
+Dado que no recolectamos datos en servidores externos, no vendemos, intercambiamos ni transferimos tu información personal a terceros. La única transferencia de datos ocurre entre los dispositivos que tú mismo vinculas explícitamente mediante la interfaz de la Aplicación.
+
+5. Modificaciones a esta Política
+Nos reservamos el derecho de actualizar esta política de privacidad en cualquier momento. Cualquier cambio en el manejo de permisos de Android o en la arquitectura de red será notificado mediante una actualización de este documento.
+
+6. Contacto
+Si tienes preguntas técnicas o consultas relacionadas con esta Política de Privacidad o la gestión de permisos forenses, puedes contactarnos en:
+Correo electrónico: [brocamproyect@gmail.com]
